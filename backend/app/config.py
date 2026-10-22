@@ -14,6 +14,14 @@ def _bool(name: str, default: bool) -> bool:
     return default if v is None else v.strip().lower() in {"1", "true", "yes", "on"}
 
 
+DEV_DATABASE_URL = "postgresql+psycopg://yala:yala@localhost:5432/yalainsight"
+MISSING_DATABASE_HELP = (
+    "No database is configured: set YALA_DATABASE_URL (or DATABASE_URL) to your PostgreSQL connection string. "
+    "On Render, create a PostgreSQL database and copy its *Internal Database URL* into the web service's "
+    "Environment, or deploy with the Blueprint (New > Blueprint), which wires this up automatically. "
+    "See docs/DEPLOYMENT.md.")
+
+
 def _db_url(url: str) -> str:
     """Accept provider-style URLs (postgres://, postgresql://) and select the psycopg 3 driver."""
     for prefix in ("postgres://", "postgresql://"):
@@ -25,8 +33,10 @@ def _db_url(url: str) -> str:
 @dataclass(frozen=True)
 class Settings:
     env: str = field(default_factory=lambda: os.getenv("YALA_ENV", "development"))
+    # YALA_DATABASE_URL, or the conventional DATABASE_URL; falls back to a local development database.
     database_url: str = field(default_factory=lambda: _db_url(
-        os.getenv("YALA_DATABASE_URL", "postgresql+psycopg://yala:yala@localhost:5432/yalainsight")))
+        os.getenv("YALA_DATABASE_URL") or os.getenv("DATABASE_URL") or DEV_DATABASE_URL))
+    database_configured: bool = field(default_factory=lambda: bool(os.getenv("YALA_DATABASE_URL") or os.getenv("DATABASE_URL")))
     jwt_secret: str = field(default_factory=lambda: os.getenv("YALA_JWT_SECRET", "dev-insecure-secret-change-me-0123456789"))
     jwt_ttl_minutes: int = field(default_factory=lambda: int(os.getenv("YALA_JWT_TTL_MINUTES", "480")))
     rate_limit_per_minute: int = field(default_factory=lambda: int(os.getenv("YALA_RATE_LIMIT_PER_MINUTE", "600")))
@@ -58,6 +68,9 @@ class Settings:
         return self.env == "production"
 
     def validate(self) -> None:
+        if self.is_production or os.getenv("RENDER"):
+            if not self.database_configured:
+                raise RuntimeError(MISSING_DATABASE_HELP)
         if self.is_production:
             if self.jwt_secret.startswith("dev-") or len(self.jwt_secret) < 32:
                 raise RuntimeError("YALA_JWT_SECRET must be set to a strong secret (>=32 chars) in production")
