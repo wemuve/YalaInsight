@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 from .config import settings
 from .core.logging import configure_logging, log, request_id_var
@@ -101,6 +102,17 @@ async def request_context(request: Request, call_next):  # noqa: ANN001
     t0 = time.perf_counter()
     try:
         response = await call_next(request)
+    except ProgrammingError as exc:
+        if getattr(exc.orig, "sqlstate", None) != "42P01":  # 42P01 = undefined_table
+            logger.exception("unhandled error")
+            metrics["http_5xx"] += 1
+            response = JSONResponse({"detail": "Internal server error", "request_id": rid}, status_code=500)
+        else:
+            logger.error("database schema missing — migrations have not been applied")
+            metrics["http_5xx"] += 1
+            response = JSONResponse({"detail": "The database has not been set up yet. Restart or redeploy the service: it "
+                                               "applies database migrations at start-up (see the deploy log for errors).",
+                                     "request_id": rid}, status_code=503)
     except Exception:
         logger.exception("unhandled error")
         metrics["http_5xx"] += 1

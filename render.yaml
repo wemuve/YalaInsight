@@ -10,7 +10,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /ready
-    preDeployCommand: sh /srv/deploy/release.sh
+    # Database migrations run automatically at start-up (deploy/start.sh); no pre-deploy hook needed.
     autoDeploy: true
     envVars:
       - key: YALA_ENV
