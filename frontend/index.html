@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YalaInsight</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet.css">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/vendor/leaflet.js"></script>
+  <script src="/static/vendor/chart.umd.js"></script>
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form" class="login-card">
+      <div class="brand big"><span class="logo">◐</span> YalaInsight</div>
+      <p class="muted">Solar plant intelligence, financial loss analytics &amp; asset lifecycle</p>
+      <label>Email <input name="email" type="email" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <label id="otp-row" class="hidden">Authentication code <input name="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"></label>
+      <button type="submit" class="btn primary">Sign in</button>
+      <p id="login-error" class="error"></p>
+      <p id="demo-hint" class="muted small hidden">Demo instance with synthetic data. Demo password: <code>Demo-Password-2026</code></p>
+    </form>
+  </div>
+
+  <div id="app" class="layout hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">◐</span> YalaInsight</div>
+      <nav id="nav">
+        <a href="#/dashboard" data-nav="dashboard">Portfolio dashboard</a>
+        <a href="#/plants" data-nav="plants">Plants</a>
+        <a href="#/alerts" data-nav="alerts">Anomalies &amp; alerts</a>
+        <a href="#/work-orders" data-nav="work-orders">Maintenance</a>
+        <a href="#/simulator" data-nav="simulator">Recovery simulator</a>
+        <a href="#/carbon" data-nav="carbon">Carbon</a>
+        <a href="#/reports" data-nav="reports">Reports</a>
+        <a href="#/settings" data-nav="settings">Settings &amp; integrations</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="whoami" class="small"></div>
+        <button id="logout" class="btn ghost small">Sign out</button>
+        <a class="small muted" href="#/account">My account</a>
+        <a class="small muted" href="/api/docs" target="_blank" rel="noopener">API docs</a>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <button id="menu" class="btn ghost menu-btn" aria-label="Menu">☰</button>
+        <div id="crumbs" class="crumbs"></div>
+        <div class="period">
+          <label>From <input type="date" id="p-start"></label>
+          <label>To <input type="date" id="p-end"></label>
+          <button id="p-reset" class="btn ghost small" title="Last 30 days of available data">Latest 30 d</button>
+        </div>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+  </div>
+  <div id="drawer" class="drawer hidden"><div class="drawer-body"></div></div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

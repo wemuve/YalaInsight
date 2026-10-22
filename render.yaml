@@ -1,0 +1,64 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# New > Blueprint > select this repository. Render creates the web service, PostgreSQL and Key Value (Redis),
+# and asks for the values marked `sync: false`. Plans/regions below are starting points; adjust in the dashboard.
+services:
+  - type: web
+    name: yalainsight
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    preDeployCommand: sh /srv/deploy/release.sh
+    autoDeploy: true
+    envVars:
+      - key: YALA_ENV
+        value: production
+      - key: YALA_DATABASE_URL
+        fromDatabase:
+          name: yalainsight-db
+          property: connectionString
+      - key: YALA_REDIS_URL
+        fromService:
+          type: keyvalue
+          name: yalainsight-cache
+          property: connectionString
+      - key: YALA_JWT_SECRET
+        generateValue: true
+      - key: YALA_DATA_KEY
+        generateValue: true
+      - key: YALA_SCHEDULER_ENABLED
+        value: "true"
+      - key: YALA_DETECTION_INTERVAL_MINUTES
+        value: "60"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      # First platform administrator (temporary password, changed at first sign-in).
+      - key: YALA_BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: YALA_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      # "true" loads the synthetic demo portfolio with published demo passwords. Never on a real-customer instance.
+      - key: YALA_LOAD_DEMO
+        value: "false"
+      - key: YALA_SHOW_DEMO_LOGIN
+        value: "false"
+      - key: NREL_API_KEY
+        sync: false
+
+  - type: keyvalue
+    name: yalainsight-cache
+    plan: starter
+    region: frankfurt
+    ipAllowList: []          # private network only
+    maxmemoryPolicy: allkeys-lru
+
+databases:
+  - name: yalainsight-db
+    plan: basic-256mb
+    region: frankfurt
+    postgresMajorVersion: "16"
+    databaseName: yalainsight
+    user: yala_app
+    ipAllowList: []          # private network only

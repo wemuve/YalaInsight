@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      YALA_TEST_DATABASE_URL: postgresql+psycopg://yala:yala@localhost:5432/yalainsight_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Create non-superuser test role (RLS must apply)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE ROLE yala LOGIN PASSWORD 'yala' NOSUPERUSER;"
+          psql -h localhost -U postgres -c "CREATE DATABASE yalainsight_test OWNER yala;"
+          psql -h localhost -U postgres -d yalainsight_test -c "CREATE EXTENSION postgis;"
+      - run: pip install -r backend/requirements-dev.txt ruff
+      - run: ruff check backend
+      - run: node --check frontend/app.js
+      - run: python -m pytest -q
+        working-directory: backend
