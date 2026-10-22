@@ -5,7 +5,9 @@ import logging
 import time
 import uuid
 from collections import Counter
+from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,13 +33,44 @@ from .modules.performance.router import router as performance_router
 from .modules.plants.router import router as plants_router
 from .modules.reporting.router import router as reporting_router
 
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0"
 settings.validate()
 configure_logging()
 logger = logging.getLogger("yala.http")
 metrics: Counter = Counter()
 
+ROLE_SQL = text("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
+
+
+def db_role_bypasses_rls() -> bool:
+    with engine.connect() as c:
+        return bool(c.execute(ROLE_SQL).scalar())
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):  # noqa: ANN201
+    try:
+        unsafe = db_role_bypasses_rls()
+    except Exception:  # noqa: BLE001 — DB not reachable yet; /ready reports it
+        unsafe = None
+    if unsafe:
+        msg = ("The database role is a superuser or has BYPASSRLS, so row-level tenant isolation is NOT enforced. "
+               "Connect with a dedicated non-superuser role (see docs/DEPLOYMENT.md).")
+        if settings.is_production:
+            raise RuntimeError(msg)
+        logger.warning(msg)
+    scheduler = None
+    if settings.scheduler_enabled:
+        from .jobs import Scheduler
+        scheduler = Scheduler()
+        scheduler.start()
+    yield
+    if scheduler:
+        scheduler.stop()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="YalaInsight API",
     version=API_VERSION,
     description="Solar plant intelligence, financial loss analytics and asset lifecycle platform. "
@@ -49,6 +82,16 @@ app = FastAPI(
 if settings.cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
                        allow_methods=["*"], allow_headers=["Authorization", "Content-Type", "X-API-Key"])
+
+
+_tiles = urlsplit(settings.map_tile_url.replace("{s}", "a"))
+_tile_src = f"{_tiles.scheme}://{_tiles.netloc}".replace("://a.", "://*.")
+APP_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+           f"img-src 'self' data: {_tile_src}; connect-src 'self'; font-src 'self'; object-src 'none'; "
+           "frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+DOCS_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https://fastapi.tiangolo.com; "
+            "worker-src blob:; frame-ancestors 'none'")
 
 
 @app.middleware("http")
@@ -69,6 +112,10 @@ async def request_context(request: Request, call_next):  # noqa: ANN001
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = DOCS_CSP if request.url.path.startswith(("/api/docs", "/api/redoc")) else APP_CSP
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/docs"):
         response.headers["Cache-Control"] = "no-store"
     if request.url.path not in ("/health", "/ready"):
@@ -96,7 +143,13 @@ def ready() -> JSONResponse:
         with engine.connect() as c:
             rev = c.execute(text("SELECT version_num FROM alembic_version")).scalar()
             postgis = c.execute(text("SELECT postgis_lib_version()")).scalar()
-        return JSONResponse({"status": "ready", "db_revision": rev, "postgis": postgis})
+            unsafe = bool(c.execute(ROLE_SQL).scalar())
+        from .core.ratelimit import limiter
+        body = {"status": "ready", "db_revision": rev, "postgis": postgis, "tenant_isolation_enforced": not unsafe,
+                "rate_limiter": limiter.backend, "scheduler": settings.scheduler_enabled}
+        if getattr(limiter, "ping", None) and not limiter.ping():
+            body["rate_limiter"] = "redis-unreachable"
+        return JSONResponse(body)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"status": "unavailable", "error": type(exc).__name__}, status_code=503)
 

@@ -1,7 +1,8 @@
 /* YalaInsight single-page client. No build step; talks to /api/v1 with a bearer token. */
 "use strict";
 
-const S = { token: null, me: null, charts: [], maps: [], plants: null };
+const S = { token: null, me: null, charts: [], maps: [], plants: null,
+  config: { map_tile_url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", map_tile_attribution: "© OpenStreetMap contributors", show_demo_login: false } };
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = () => $("#view");
 
@@ -41,7 +42,7 @@ async function api(path, opts = {}) {
     opts.body = JSON.stringify(opts.json);
   }
   const r = await fetch(`/api/v1${path}`, { ...opts, headers });
-  if (r.status === 401 && S.token) { logout(); throw new Error("Session expired"); }
+  if (r.status === 401 && S.token) { logout(); throw new Error("Session expired — please sign in again"); }
   if (r.status === 204) return null;
   const ct = r.headers.get("content-type") || "";
   const body = ct.includes("json") ? await r.json() : await r.text();
@@ -157,12 +158,20 @@ async function login(e) {
   const f = formData(e.target);
   $("#login-error").textContent = "";
   try {
-    const r = await api("/auth/login", { method: "POST", json: { email: f.email, password: f.password } });
+    const r = await api("/auth/login", { method: "POST", json: { email: f.email, password: f.password, otp: f.otp || null } });
     S.token = r.access_token;
-    sessionStorage.setItem("yala_token", S.token);
+    try { sessionStorage.setItem("yala_token", S.token); } catch (_) { /* storage unavailable */ }
+    $("#otp-row").classList.add("hidden");
+    e.target.elements.otp.value = "";
     await boot();
   } catch (err) {
-    $("#login-error").textContent = err.message;
+    if (err.message === "mfa_required") {
+      $("#otp-row").classList.remove("hidden");
+      e.target.elements.otp.focus();
+      $("#login-error").textContent = "Enter the 6-digit code from your authenticator app.";
+    } else {
+      $("#login-error").textContent = err.message;
+    }
   }
 }
 function logout() {
@@ -176,8 +185,9 @@ async function boot() {
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   const u = S.me.user;
-  $("#whoami").innerHTML = `${esc(u ? u.full_name : "API key")}<br><span class="muted">${esc(S.me.organization.name)} · ${esc(u ? u.role : "")}</span>`;
-  route();
+  $("#whoami").innerHTML = `<a href="#/account" style="color:inherit">${esc(u ? u.full_name : "API key")}</a><br><span class="muted">${esc(S.me.organization.name)} · ${esc(u ? u.role : "")}</span>`;
+  if (u && u.must_change_password && location.hash !== "#/account") location.hash = "#/account";
+  else route();
 }
 
 // ------------------------------------------------------------------ router
@@ -192,10 +202,12 @@ const routes = [
   [/^#\/carbon$/, viewCarbon],
   [/^#\/reports$/, viewReports],
   [/^#\/settings(?:\/(\w+))?$/, viewSettings],
+  [/^#\/account$/, viewAccount],
 ];
 async function route() {
   if (!S.token) return;
-  const h = location.hash || "#/dashboard";
+  let h = location.hash || "#/dashboard";
+  if (S.me?.user?.must_change_password && h !== "#/account") { location.hash = "#/account"; return; }
   cleanup();
   closeDrawer();
   document.querySelector(".sidebar").classList.remove("open");
@@ -279,7 +291,7 @@ function kpi(label, value, sub = "", basis = "", href = "") {
 
 function portfolioMap(id, plants) {
   const m = L.map(id, { scrollWheelZoom: false });
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap contributors" }).addTo(m);
+  L.tileLayer(S.config.map_tile_url, { maxZoom: 18, attribution: S.config.map_tile_attribution }).addTo(m);
   const pts = [];
   const color = { ok: "#1f8a4c", warning: "#c07a12", critical: "#c0392b", no_data: "#888" };
   plants.forEach((p) => {
@@ -759,7 +771,7 @@ async function tabMap(p) {
   $("#tab").innerHTML = `<div class="panel"><h2>Site boundary & equipment locations</h2><div id="site-map" class="map" style="height:480px"></div>
     <p class="note">Geometry stored in PostGIS (geography, WGS84). Equipment without coordinates is not shown.</p></div>`;
   const m = L.map("site-map");
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors" }).addTo(m);
+  L.tileLayer(S.config.map_tile_url, { maxZoom: 19, attribution: S.config.map_tile_attribution }).addTo(m);
   const layer = L.geoJSON(g, {
     pointToLayer: (f, ll) => L.circleMarker(ll, { radius: f.properties.kind === "plant" ? 9 : 6, color: f.properties.kind === "inverter" ? COLORS.accent : COLORS.actual, fillOpacity: 0.7 }),
     style: { color: COLORS.actual, weight: 2, fillOpacity: 0.08 },
@@ -976,15 +988,51 @@ async function viewSettings(tab = "org") {
       <p class="note">Modules are licensed per subscription plan with optional per-organisation overrides set by the platform administrator. No payment processing is implemented.</p></div>`;
   });
   if (tab === "users") await guard(async () => {
-    const users = await api("/users");
-    T.innerHTML = `<div class="panel"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Last login</th><th></th></tr></thead><tbody>
-      ${users.map((u) => `<tr><td>${esc(u.full_name)}</td><td>${esc(u.email)}</td><td><select data-role="${u.id}">${["client_admin", "plant_owner", "analyst", "technician", "read_only"].map((r) => `<option ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}${u.role === "platform_admin" ? "<option selected>platform_admin</option>" : ""}</select></td>
-        <td>${u.is_active ? "yes" : "no"}</td><td class="small">${dt(u.last_login_at)}</td><td><button class="btn small" data-toggle="${u.id}" data-active="${u.is_active}">${u.is_active ? "Deactivate" : "Activate"}</button></td></tr>`).join("")}</tbody></table>
+    const [users, plants] = await Promise.all([api("/users"), plantsList()]);
+    const pname = Object.fromEntries(plants.map((p) => [p.id, p.name]));
+    const scopeText = (u) => (u.plant_scope === null ? "All plants" : u.plant_scope.map((id) => pname[id] || "?").join(", ") || "No plants");
+    T.innerHTML = `<div class="panel"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Plant access</th><th>Security</th><th>Last sign-in</th><th></th></tr></thead><tbody>
+      ${users.map((u) => `<tr><td>${esc(u.full_name)}<div class="muted small">${esc(u.email)}</div></td>
+        <td><select data-role="${u.id}">${["client_admin", "plant_owner", "analyst", "technician", "read_only"].map((r) => `<option ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}${u.role === "platform_admin" ? "<option selected>platform_admin</option>" : ""}</select></td>
+        <td class="small">${esc(scopeText(u))}<br><button class="btn small" data-scope="${u.id}">Change</button></td>
+        <td class="small">${u.is_active ? "" : `<span class="chip">inactive</span> `}${u.mfa_enabled ? `<span class="chip verified">2FA</span> ` : `<span class="chip">no 2FA</span> `}${u.locked ? `<span class="chip simulated">locked</span> ` : ""}${u.must_change_password ? `<span class="chip">temp password</span>` : ""}</td>
+        <td class="small">${dt(u.last_login_at)}</td>
+        <td><div class="row">
+          <button class="btn small" data-toggle="${u.id}" data-active="${u.is_active}">${u.is_active ? "Deactivate" : "Activate"}</button>
+          ${u.locked ? `<button class="btn small" data-unlock="${u.id}">Unlock</button>` : ""}
+          ${u.mfa_enabled ? `<button class="btn small" data-mfa="${u.id}">Reset 2FA</button>` : ""}
+          <button class="btn small" data-pw="${u.id}">Reset password</button></div></td></tr>`).join("")}</tbody></table></div>
+      <div id="u-edit"></div>
       <h3 style="margin-top:12px">Invite user</h3><form id="u-form" class="form"><label>Name <input name="full_name" required></label><label>Email <input type="email" name="email" required></label>
         <label>Role <select name="role">${["analyst", "technician", "plant_owner", "read_only", "client_admin"].map((r) => `<option>${r}</option>`).join("")}</select></label>
-        <label>Initial password <input type="password" name="password" required minlength="10"></label><div><button class="btn">Create</button> <span class="error" id="u-err"></span></div></form></div>`;
-    T.querySelectorAll("[data-role]").forEach((s) => (s.onchange = async () => { try { await api(`/users/${s.dataset.role}`, { method: "PATCH", json: { role: s.value } }); toast("Role updated"); } catch (err) { toast(err.message); } }));
-    T.querySelectorAll("[data-toggle]").forEach((b) => (b.onclick = async () => { try { await api(`/users/${b.dataset.toggle}`, { method: "PATCH", json: { is_active: b.dataset.active !== "true" } }); viewSettings("users"); } catch (err) { toast(err.message); } }));
+        <label>Temporary password <input type="password" name="password" required minlength="10" autocomplete="new-password"></label>
+        <div><button class="btn">Create</button> <span class="error" id="u-err"></span></div></form>
+      <p class="note">New users and admin-reset passwords are temporary: the user must choose their own password at first sign-in. Role changes, resets and deactivation sign the user out everywhere.</p></div>`;
+    const patch = async (id, body, msg) => { try { await api(`/users/${id}`, { method: "PATCH", json: body }); toast(msg); viewSettings("users"); } catch (err) { toast(err.message); } };
+    T.querySelectorAll("[data-role]").forEach((s) => (s.onchange = () => patch(s.dataset.role, { role: s.value }, "Role updated")));
+    T.querySelectorAll("[data-toggle]").forEach((b) => (b.onclick = () => patch(b.dataset.toggle, { is_active: b.dataset.active !== "true" }, "Updated")));
+    T.querySelectorAll("[data-unlock]").forEach((b) => (b.onclick = () => patch(b.dataset.unlock, { unlock: true }, "Account unlocked")));
+    T.querySelectorAll("[data-mfa]").forEach((b) => (b.onclick = () => patch(b.dataset.mfa, { reset_mfa: true }, "Two-factor authentication reset")));
+    T.querySelectorAll("[data-pw]").forEach((b) => (b.onclick = () => {
+      $("#u-edit").innerHTML = `<form id="pw-form" class="form panel"><label>New temporary password <input type="password" name="password" required minlength="10" autocomplete="new-password"></label>
+        <div><button class="btn primary">Set temporary password</button> <button type="button" class="btn ghost" data-cancel>Cancel</button></div></form>`;
+      $("#pw-form").onsubmit = (e) => { e.preventDefault(); patch(b.dataset.pw, { password: e.target.password.value }, "Password reset — user must change it at next sign-in"); };
+      $("#u-edit [data-cancel]").onclick = () => { $("#u-edit").innerHTML = ""; };
+    }));
+    T.querySelectorAll("[data-scope]").forEach((b) => (b.onclick = () => {
+      const u = users.find((x) => x.id === b.dataset.scope);
+      $("#u-edit").innerHTML = `<form id="scope-form" class="form panel"><h3 class="full">Plant access — ${esc(u.full_name)}</h3>
+        <label class="row full"><input type="checkbox" name="all" ${u.plant_scope === null ? "checked" : ""}> All plants in the organisation (including future ones)</label>
+        ${plants.map((p) => `<label class="row"><input type="checkbox" name="plant" value="${p.id}" ${u.plant_scope && u.plant_scope.includes(p.id) ? "checked" : ""}> ${esc(p.name)}</label>`).join("")}
+        <div class="full"><button class="btn primary">Save access</button> <button type="button" class="btn ghost" data-cancel>Cancel</button></div></form>`;
+      $("#scope-form").onsubmit = (e) => {
+        e.preventDefault();
+        const f = e.target;
+        const ids = [...f.querySelectorAll("input[name=plant]:checked")].map((c) => c.value);
+        patch(u.id, f.elements.all.checked ? { all_plants: true } : { plant_scope: ids }, "Plant access updated");
+      };
+      $("#u-edit [data-cancel]").onclick = () => { $("#u-edit").innerHTML = ""; };
+    }));
     $("#u-form").onsubmit = async (e) => { e.preventDefault(); try { await api("/users", { method: "POST", json: formData(e.target) }); viewSettings("users"); } catch (err) { $("#u-err").textContent = err.message; } };
   });
   if (tab === "keys") await guard(async () => {
@@ -1005,7 +1053,7 @@ async function viewSettings(tab = "org") {
         <td><button class="btn small" data-test="${h.id}">Send test</button> <button class="btn small danger" data-del="${h.id}">Delete</button></td></tr>`).join("") || `<tr><td class="muted" colspan="3">None</td></tr>`}</tbody></table>
       <form id="h-form" class="form" style="margin-top:10px"><label class="full">HTTPS URL <input name="url" required placeholder="https://example.com/yala-hook"></label>
         <label>Events (comma separated) <input name="events" value="alert.created,work_order.completed"></label><div><button class="btn">Add webhook</button></div></form><div id="h-out"></div>
-      <h3 style="margin-top:12px">Recent deliveries</h3><table><tbody>${del.map((d) => `<tr><td class="small">${dt(d.attempted_at)}</td><td>${esc(d.event)}</td><td>${d.success ? "✓" : "✗"} ${d.status_code ?? ""}</td><td class="small muted">${esc(d.error || "")}</td></tr>`).join("") || `<tr><td class="muted">None</td></tr>`}</tbody></table></div>`;
+      <h3 style="margin-top:12px">Recent deliveries</h3><table><tbody>${del.map((d) => `<tr><td class="small">${dt(d.attempted_at)}</td><td>${esc(d.event)}</td><td>${d.success ? "✓" : "✗"} ${d.status_code ?? ""}</td><td class="small">attempt ${d.attempts}${d.next_attempt_at ? ` · retry ${dt(d.next_attempt_at)}` : ""}</td><td class="small muted">${esc(d.error || "")}</td></tr>`).join("") || `<tr><td class="muted">None</td></tr>`}</tbody></table></div>`;
     T.querySelectorAll("[data-test]").forEach((b) => (b.onclick = async () => { await api(`/webhooks/${b.dataset.test}/test`, { method: "POST" }); toast("Test queued"); setTimeout(() => viewSettings("webhooks"), 1500); }));
     T.querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => { await api(`/webhooks/${b.dataset.del}`, { method: "DELETE" }); viewSettings("webhooks"); }));
     $("#h-form").onsubmit = async (e) => { e.preventDefault(); const d = formData(e.target); d.events = d.events.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1053,12 +1101,89 @@ async function viewSettings(tab = "org") {
       ${a.map((x) => `<tr><td class="small">${dt(x.created_at)}</td><td>${esc(x.action)}</td><td class="small">${esc(x.entity_type || "")} ${esc((x.entity_id || "").slice(0, 8))}</td><td class="small">${esc((x.user_id || "").slice(0, 8))}</td><td class="small">${esc(x.ip || "")}</td><td class="small muted">${esc(JSON.stringify(x.details)).slice(0, 160)}</td></tr>`).join("")}</tbody></table></div></div>`;
   });
   if (tab === "platform") await guard(async () => {
-    const [orgs, plans] = await Promise.all([api("/platform/organizations"), api("/platform/plans")]);
-    T.innerHTML = `<div class="panel"><h2>Tenants & licences</h2><table><thead><tr><th>Organisation</th><th>Plan</th><th>Modules</th><th>Active</th></tr></thead><tbody>
+    const [orgs, plans, jobs] = await Promise.all([api("/platform/organizations"), api("/platform/plans"), api("/platform/jobs")]);
+    T.innerHTML = `<div class="panel"><h2>Tenants & licences</h2><div class="table-wrap"><table><thead><tr><th>Organisation</th><th>Plan</th><th>Modules</th><th>Active</th></tr></thead><tbody>
       ${orgs.map((o) => `<tr><td>${esc(o.name)}<div class="muted small">${esc(o.slug)}</div></td><td><select data-plan="${o.id}">${plans.map((p) => `<option value="${p.code}" ${p.code === o.plan_code ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></td>
-        <td class="small">${esc(o.modules.join(", "))}</td><td>${o.is_active ? "yes" : "no"}</td></tr>`).join("")}</tbody></table></div>`;
+        <td class="small">${esc(o.modules.join(", "))}</td><td><button class="btn small" data-active="${o.id}" data-val="${!o.is_active}">${o.is_active ? "Suspend" : "Reactivate"}</button></td></tr>`).join("")}</tbody></table></div></div>
+      <div class="panel"><h2>Onboard a customer organisation</h2><form id="org-form" class="form">
+        <label>Organisation name <input name="name" required></label><label>Slug (url-safe) <input name="slug" required pattern="[a-z0-9-]{3,80}"></label>
+        <label>Plan <select name="plan_code">${plans.map((p) => `<option value="${p.code}">${esc(p.name)}</option>`).join("")}</select></label>
+        <label>Currency <input name="default_currency" value="USD" maxlength="3" required></label><label>Country (ISO-2) <input name="country_code" maxlength="2"></label>
+        <label>Admin name <input name="admin_name" required></label><label>Admin email <input type="email" name="admin_email" required></label>
+        <label>Temporary admin password <input type="password" name="admin_password" required minlength="10" autocomplete="new-password"></label>
+        <div class="full"><button class="btn primary">Create organisation</button> <span class="error" id="org-err"></span></div></form></div>
+      <div class="panel"><h2>Background jobs</h2><table><thead><tr><th>Job</th><th>Last run</th><th>Status</th><th>Details</th></tr></thead><tbody>
+        ${jobs.map((j) => `<tr><td>${esc(j.name)}</td><td class="small">${dt(j.last_finished_at || j.last_started_at)}</td><td>${status(j.last_status || "never")}</td><td class="small muted">${esc(JSON.stringify(j.details))}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No runs yet (scheduler disabled or just started).</td></tr>`}</tbody></table></div>`;
     T.querySelectorAll("[data-plan]").forEach((s) => (s.onchange = async () => { await api(`/platform/organizations/${s.dataset.plan}/license`, { method: "PATCH", json: { plan_code: s.value } }); viewSettings("platform"); }));
+    T.querySelectorAll("[data-active]").forEach((b) => (b.onclick = async () => { await api(`/platform/organizations/${b.dataset.active}/license`, { method: "PATCH", json: { is_active: b.dataset.val === "true" } }); viewSettings("platform"); }));
+    $("#org-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      d.default_currency = d.default_currency.toUpperCase();
+      if (d.country_code) d.country_code = d.country_code.toUpperCase();
+      try { await api("/platform/organizations", { method: "POST", json: d }); toast("Organisation created — share the temporary password securely"); viewSettings("platform"); }
+      catch (err) { $("#org-err").textContent = err.message; }
+    };
   });
+}
+
+// ------------------------------------------------------------------ my account
+async function viewAccount() {
+  setCrumbs([{ label: "My account" }]);
+  S.me = await api("/auth/me");
+  const u = S.me.user;
+  if (!u) { view().innerHTML = `<div class="panel"><p>API-key sessions have no account settings.</p></div>`; return; }
+  view().innerHTML = `<h1>My account</h1><div class="muted small">${esc(u.email)} · ${esc(u.role)} · ${esc(S.me.organization.name)}</div>
+    ${u.must_change_password ? `<div class="warnbox">You signed in with a temporary password. Choose your own password to continue.</div>` : ""}
+    <div class="grid g2">
+      <div class="panel"><h2>Change password</h2><form id="cp-form" class="form">
+        <label class="full">Current password <input type="password" name="current_password" required autocomplete="current-password"></label>
+        <label class="full">New password (≥ 10 characters, letters and digits) <input type="password" name="new_password" required minlength="10" autocomplete="new-password"></label>
+        <label class="full">Repeat new password <input type="password" name="repeat" required minlength="10" autocomplete="new-password"></label>
+        <div class="full"><button class="btn primary">Change password</button> <span class="error" id="cp-err"></span></div></form>
+        <p class="note">Changing your password signs out your other sessions.</p></div>
+      <div class="panel"><h2>Two-factor authentication</h2><div id="mfa-box"></div></div>
+    </div>
+    <div class="panel"><h2>Sessions</h2><p class="muted">Lost a device or shared a computer? Sign out of every browser and device at once.</p>
+      <button class="btn danger" id="logout-all">Sign out everywhere</button></div>`;
+  $("#cp-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = formData(e.target);
+    if (f.new_password !== f.repeat) { $("#cp-err").textContent = "The two new passwords do not match."; return; }
+    try {
+      const r = await api("/auth/change-password", { method: "POST", json: { current_password: f.current_password, new_password: f.new_password } });
+      S.token = r.access_token;
+      try { sessionStorage.setItem("yala_token", S.token); } catch (_) { /* storage unavailable */ }
+      toast("Password changed");
+      S.me = await api("/auth/me");
+      location.hash = "#/dashboard";
+    } catch (err) { $("#cp-err").textContent = err.message; }
+  };
+  $("#logout-all").onclick = async () => { await api("/auth/logout-all", { method: "POST" }); logout(); };
+  const box = $("#mfa-box");
+  if (u.mfa_enabled) {
+    box.innerHTML = `<p><span class="chip verified">enabled</span> Sign-in requires a code from your authenticator app.</p>
+      <form id="mfa-off" class="form"><label>Password <input type="password" name="password" required autocomplete="current-password"></label>
+      <label>Current code <input name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></label>
+      <div class="full"><button class="btn danger">Turn off two-factor</button> <span class="error" id="mfa-err"></span></div></form>`;
+    $("#mfa-off").onsubmit = async (e) => { e.preventDefault(); try { await api("/auth/mfa/disable", { method: "POST", json: formData(e.target) }); toast("Two-factor turned off"); viewAccount(); } catch (err) { $("#mfa-err").textContent = err.message; } };
+  } else {
+    box.innerHTML = `<p class="muted">Protect your account with a 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, Authy…).</p>
+      ${u.must_change_password ? `<p class="small muted">Change your password first.</p>` : `<button class="btn primary" id="mfa-start">Set up two-factor</button>`}<div id="mfa-setup"></div>`;
+    const st = $("#mfa-start");
+    if (st) st.onclick = async () => {
+      try {
+        const r = await api("/auth/mfa/setup", { method: "POST" });
+        $("#mfa-setup").innerHTML = `<ol class="compact small"><li>In your authenticator app choose “Add account” → “Enter a setup key”.</li>
+          <li>Account: <code>${esc(u.email)}</code> · Key: <code style="user-select:all">${esc(r.secret.replace(/(.{4})/g, "$1 ").trim())}</code> · Type: time-based</li>
+          <li>Enter the 6-digit code the app shows.</li></ol>
+          <p class="small muted">Setup link for apps that accept one: <code style="user-select:all;word-break:break-all">${esc(r.otpauth_uri)}</code></p>
+          <form id="mfa-on" class="form"><label>Code <input name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code"></label>
+          <div><button class="btn primary">Turn on two-factor</button> <span class="error" id="mfa-err"></span></div></form>`;
+        $("#mfa-on").onsubmit = async (e) => { e.preventDefault(); try { await api("/auth/mfa/enable", { method: "POST", json: formData(e.target) }); toast("Two-factor authentication is on"); viewAccount(); } catch (err) { $("#mfa-err").textContent = err.message; } };
+      } catch (err) { toast(err.message); }
+    };
+  }
 }
 
 // ------------------------------------------------------------------ init
@@ -1074,5 +1199,12 @@ $("#menu").onclick = () => document.querySelector(".sidebar").classList.toggle("
 ["p-start", "p-end"].forEach((id) => $(`#${id}`).addEventListener("change", route));
 $("#p-reset").onclick = () => { $("#p-start").value = ""; $("#p-end").value = ""; route(); };
 window.addEventListener("hashchange", route);
-try { S.token = sessionStorage.getItem("yala_token"); } catch (_) { S.token = null; }
-if (S.token) boot(); else logout();
+(async () => {
+  try { S.config = { ...S.config, ...(await api("/auth/config")) }; } catch (_) { /* keep defaults */ }
+  if (S.config.show_demo_login) {
+    $("#demo-hint").classList.remove("hidden");
+    $("#login-form").elements.email.value = "admin@demo.yalainsight.local";
+  }
+  try { S.token = sessionStorage.getItem("yala_token"); } catch (_) { S.token = null; }
+  if (S.token) boot(); else logout();
+})();

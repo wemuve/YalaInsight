@@ -13,7 +13,7 @@ from ...core.audit import audit
 from ...core.deps import Principal, client_ip, require, require_module
 from ...db import get_db
 from ...models import EmissionFactor, Plant, VerifiedReduction
-from ..common import get_plant, resolve_period
+from ..common import get_plant, resolve_period, scoped
 from .engine import FactorRef, avoided_emissions
 
 router = APIRouter(tags=["carbon"], dependencies=[Depends(require_module("carbon"))])
@@ -59,7 +59,7 @@ def carbon(plant_id: UUID, start: datetime | None = None, end: datetime | None =
 @router.get("/carbon/portfolio")
 def carbon_portfolio(start: datetime | None = None, end: datetime | None = None,
                      p: Principal = Depends(require("carbon:read")), db: Session = Depends(get_db)) -> dict:
-    plants = db.scalars(select(Plant)).all()
+    plants = db.scalars(scoped(select(Plant), Plant.id, p)).all()
     s, e = resolve_period(db, [x.id for x in plants], start, end, default_days=365)
     rows = [plant_carbon(db, x, s, e) for x in plants]
     total = sum((r["estimate"] or {}).get("estimated_avoided_tco2e", 0) for r in rows)

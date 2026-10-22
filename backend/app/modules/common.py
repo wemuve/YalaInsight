@@ -12,10 +12,20 @@ from ..core.deps import Principal
 from ..models import EnergyReading, Plant
 
 
+def in_scope(principal: Principal, plant_id: UUID) -> bool:
+    """True when the caller may access this plant (per-user plant scope; None = all plants)."""
+    return principal.plant_scope is None or plant_id in principal.plant_scope
+
+
+def scoped(q, column, principal: Principal):  # noqa: ANN001, ANN201
+    """Restrict a query to the caller's plant scope."""
+    return q if principal.plant_scope is None else q.where(column.in_(principal.plant_scope))
+
+
 def get_plant(db: Session, plant_id: UUID, principal: Principal) -> Plant:
     plant = db.get(Plant, plant_id)
     # RLS already hides other tenants' rows; the explicit check is defence in depth.
-    if plant is None or plant.organization_id != principal.org_id:
+    if plant is None or plant.organization_id != principal.org_id or not in_scope(principal, plant.id):
         raise HTTPException(404, "Plant not found")
     return plant
 

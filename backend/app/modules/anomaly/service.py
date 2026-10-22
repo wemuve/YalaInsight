@@ -73,10 +73,11 @@ def alert_summary(a: Alert) -> dict:
             "currency": a.currency, "window_start": a.window_start.isoformat(), "window_end": a.window_end.isoformat()}
 
 
-def review_stats(db: Session) -> dict:
+def review_stats(db: Session, plant_scope: list | None = None) -> dict:
     """Stage-2 validation metric: share of reviewed alerts confirmed as real findings, per rule."""
     out: dict[str, dict] = {}
-    for a in db.scalars(select(Alert)):
+    q = select(Alert) if plant_scope is None else select(Alert).where(Alert.plant_id.in_(plant_scope))
+    for a in db.scalars(q):
         s = out.setdefault(a.rule_id, {"total": 0, "confirmed": 0, "false_positive": 0, "open": 0})
         s["total"] += 1
         if a.status in ("confirmed", "resolved"):

@@ -15,16 +15,28 @@ services:
       interval: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+
   migrate:
     build: .
-    command: ["alembic", "upgrade", "head"]
+    command: ["sh", "/srv/deploy/release.sh"]
     environment: &appenv
       YALA_ENV: ${YALA_ENV:-production}
       YALA_DATABASE_URL: postgresql+psycopg://yala_app:${YALA_APP_PASSWORD}@db:5432/yalainsight
       YALA_JWT_SECRET: ${YALA_JWT_SECRET:?set YALA_JWT_SECRET (>=32 chars)}
+      YALA_DATA_KEY: ${YALA_DATA_KEY:?set YALA_DATA_KEY (>=32 chars)}
+      YALA_REDIS_URL: redis://redis:6379/0
+      YALA_SCHEDULER_ENABLED: "true"
+      YALA_BOOTSTRAP_ADMIN_EMAIL: ${YALA_BOOTSTRAP_ADMIN_EMAIL:-}
+      YALA_BOOTSTRAP_ADMIN_PASSWORD: ${YALA_BOOTSTRAP_ADMIN_PASSWORD:-}
+      YALA_LOAD_DEMO: ${YALA_LOAD_DEMO:-false}
+      YALA_SHOW_DEMO_LOGIN: ${YALA_SHOW_DEMO_LOGIN:-false}
       NREL_API_KEY: ${NREL_API_KEY:-}
     depends_on:
       db: { condition: service_healthy }
+      redis: { condition: service_started }
 
   api:
     build: .

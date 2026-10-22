@@ -15,7 +15,7 @@ from ...core.audit import audit
 from ...core.deps import Principal, client_ip, require, require_module
 from ...db import get_db
 from ...models import Alert, AssetRecord, Equipment, Plant, User, WorkOrder, WorkOrderEvent
-from ..common import get_plant
+from ..common import get_plant, in_scope, scoped
 from ..integrations.webhooks import deliver, queue_event
 from .service import evaluate_recovery
 
@@ -83,6 +83,7 @@ def list_work_orders(plant_id: UUID | None = None, status: str | None = None, ov
                      p: Principal = Depends(require("workorders:read")), db: Session = Depends(get_db)) -> list[dict]:
     q = select(WorkOrder, Plant.name, User.full_name).join(Plant, Plant.id == WorkOrder.plant_id).outerjoin(
         User, User.id == WorkOrder.assignee_id)
+    q = scoped(q, WorkOrder.plant_id, p)
     if plant_id:
         q = q.where(WorkOrder.plant_id == plant_id)
     if status == "active":
@@ -139,7 +140,7 @@ def create_work_order(body: WorkOrderIn, request: Request, background: Backgroun
 @router.get("/work-orders/{wo_id}")
 def get_work_order(wo_id: UUID, p: Principal = Depends(require("workorders:read")), db: Session = Depends(get_db)) -> dict:
     w = db.get(WorkOrder, wo_id)
-    if not w or w.organization_id != p.org_id:
+    if not w or w.organization_id != p.org_id or not in_scope(p, w.plant_id):
         raise HTTPException(404, "Work order not found")
     out = wo_out(w, db.get(Plant, w.plant_id).name)
     out["events"] = [{"id": str(e.id), "kind": e.kind, "message": e.message, "data": e.data,
@@ -152,7 +153,7 @@ def get_work_order(wo_id: UUID, p: Principal = Depends(require("workorders:read"
 def update_work_order(wo_id: UUID, body: WorkOrderPatch, request: Request, background: BackgroundTasks,
                       p: Principal = Depends(require("workorders:execute")), db: Session = Depends(get_db)) -> dict:
     w = db.get(WorkOrder, wo_id)
-    if not w or w.organization_id != p.org_id:
+    if not w or w.organization_id != p.org_id or not in_scope(p, w.plant_id):
         raise HTTPException(404, "Work order not found")
     ids = []
     now = datetime.now(UTC)
@@ -199,7 +200,7 @@ class WOEventIn(BaseModel):
 @router.post("/work-orders/{wo_id}/events", status_code=201)
 def add_wo_event(wo_id: UUID, body: WOEventIn, p: Principal = Depends(require("workorders:execute")), db: Session = Depends(get_db)) -> dict:
     w = db.get(WorkOrder, wo_id)
-    if not w or w.organization_id != p.org_id:
+    if not w or w.organization_id != p.org_id or not in_scope(p, w.plant_id):
         raise HTTPException(404, "Work order not found")
     e = WorkOrderEvent(organization_id=p.org_id, work_order_id=w.id, kind=body.kind, message=body.message, data=body.data, user_id=p.user_id)
     db.add(e)
@@ -211,7 +212,7 @@ def add_wo_event(wo_id: UUID, body: WOEventIn, p: Principal = Depends(require("w
 def evaluate(wo_id: UUID, window_days: int = 14, p: Principal = Depends(require("workorders:write")), db: Session = Depends(get_db)) -> dict:
     """Compare performance before the fault/work order with performance after completion (measured)."""
     w = db.get(WorkOrder, wo_id)
-    if not w or w.organization_id != p.org_id:
+    if not w or w.organization_id != p.org_id or not in_scope(p, w.plant_id):
         raise HTTPException(404, "Work order not found")
     try:
         res = evaluate_recovery(db, w, max(3, min(window_days, 90)))
@@ -251,7 +252,7 @@ def record_out(r: AssetRecord) -> dict:
 @router.get("/asset-records")
 def list_records(plant_id: UUID | None = None, equipment_id: UUID | None = None,
                  p: Principal = Depends(require("workorders:read")), db: Session = Depends(get_db)) -> list[dict]:
-    q = select(AssetRecord)
+    q = scoped(select(AssetRecord), AssetRecord.plant_id, p)
     if plant_id:
         q = q.where(AssetRecord.plant_id == plant_id)
     if equipment_id:
@@ -275,7 +276,7 @@ def create_record(body: AssetRecordIn, request: Request, p: Principal = Depends(
 @router.get("/equipment/{equipment_id}/history")
 def equipment_history(equipment_id: UUID, p: Principal = Depends(require("workorders:read")), db: Session = Depends(get_db)) -> dict:
     e = db.get(Equipment, equipment_id)
-    if not e or e.organization_id != p.org_id:
+    if not e or e.organization_id != p.org_id or not in_scope(p, e.plant_id):
         raise HTTPException(404, "Equipment not found")
     return {
         "equipment": {"id": str(e.id), "name": e.name, "serial_number": e.serial_number, "warranty_end": e.warranty_end.isoformat() if e.warranty_end else None},

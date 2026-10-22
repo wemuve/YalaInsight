@@ -14,11 +14,12 @@
     <form id="login-form" class="login-card">
       <div class="brand big"><span class="logo">◐</span> YalaInsight</div>
       <p class="muted">Solar plant intelligence, financial loss analytics &amp; asset lifecycle</p>
-      <label>Email <input name="email" type="email" autocomplete="username" required value="admin@demo.yalainsight.local"></label>
+      <label>Email <input name="email" type="email" autocomplete="username" required></label>
       <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <label id="otp-row" class="hidden">Authentication code <input name="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"></label>
       <button type="submit" class="btn primary">Sign in</button>
       <p id="login-error" class="error"></p>
-      <p class="muted small">Demo data is synthetic. Demo password: <code>Demo-Password-2026</code></p>
+      <p id="demo-hint" class="muted small hidden">Demo instance with synthetic data. Demo password: <code>Demo-Password-2026</code></p>
     </form>
   </div>
 
@@ -38,6 +39,7 @@
       <div class="sidebar-foot">
         <div id="whoami" class="small"></div>
         <button id="logout" class="btn ghost small">Sign out</button>
+        <a class="small muted" href="#/account">My account</a>
         <a class="small muted" href="/api/docs" target="_blank" rel="noopener">API docs</a>
       </div>
     </aside>

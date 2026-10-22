@@ -25,8 +25,9 @@ from ...models import (
     Organization,
     Plant,
     SubscriptionPlan,
+    User,
 )
-from ..common import get_plant, plant_geo, wkt_point, wkt_polygon
+from ..common import get_plant, in_scope, plant_geo, scoped, wkt_point, wkt_polygon
 
 router = APIRouter(tags=["plants"])
 
@@ -105,7 +106,7 @@ def plant_out(db: Session, p: Plant) -> dict:
 
 @router.get("/plants")
 def list_plants(p: Principal = Depends(require("plants:read")), db: Session = Depends(get_db)) -> list[dict]:
-    return [plant_out(db, x) for x in db.scalars(select(Plant).order_by(Plant.name))]
+    return [plant_out(db, x) for x in db.scalars(scoped(select(Plant), Plant.id, p).order_by(Plant.name))]
 
 
 @router.post("/plants", status_code=201)
@@ -126,6 +127,9 @@ def create_plant(body: PlantIn, request: Request, p: Principal = Depends(require
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "A plant with this code already exists") from None
+    if p.plant_scope is not None and p.user_id:  # a scoped user keeps access to plants they register
+        creator = db.get(User, p.user_id)
+        creator.plant_scope = sorted({*(creator.plant_scope or []), str(plant.id)})
     audit(db, org_id=p.org_id, user_id=p.user_id, action="plant.create", entity_type="plant", entity_id=plant.id,
           details={"name": plant.name, "dc_kwp": plant.dc_capacity_kwp}, ip=client_ip(request))
     db.commit()
@@ -227,7 +231,7 @@ def create_equipment(plant_id: UUID, body: EquipmentIn, request: Request, p: Pri
 def update_equipment(equipment_id: UUID, body: dict, request: Request, p: Principal = Depends(require("plants:write")),
                      db: Session = Depends(get_db)) -> dict:
     e = db.get(Equipment, equipment_id)
-    if not e or e.organization_id != p.org_id:
+    if not e or e.organization_id != p.org_id or not in_scope(p, e.plant_id):
         raise HTTPException(404, "Equipment not found")
     merged = EquipmentIn(**{**equipment_out(e), **body})  # re-validate whole record
     for k, v in merged.model_dump(exclude={"latitude", "longitude"}).items():

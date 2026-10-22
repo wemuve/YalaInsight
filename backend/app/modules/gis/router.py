@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ...core.deps import Principal, require, require_module
 from ...db import get_db
 from ...models import Plant
-from ..common import get_plant, plant_geo, resolve_period
+from ..common import get_plant, in_scope, plant_geo, resolve_period, scoped
 from ..dashboard.service import plant_kpis
 
 router = APIRouter(prefix="/gis", tags=["gis"], dependencies=[Depends(require_module("gis"))])
@@ -24,7 +24,7 @@ def _feature(geom: dict, props: dict) -> dict:
 @router.get("/plants")
 def plants_geojson(start: datetime | None = None, end: datetime | None = None, with_kpis: bool = True,
                    p: Principal = Depends(require("plants:read")), db: Session = Depends(get_db)) -> dict:
-    plants = db.scalars(select(Plant)).all()
+    plants = db.scalars(scoped(select(Plant), Plant.id, p)).all()
     s, e = resolve_period(db, [x.id for x in plants] or None, start, end, default_days=30)
     feats = []
     for x in plants:
@@ -43,7 +43,7 @@ def plants_near(lat: float = Query(ge=-90, le=90), lon: float = Query(ge=-180, l
                 FROM plants WHERE ST_DWithin(location, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :r)
                 ORDER BY distance_km""")
     return [{"plant_id": str(r.id), "name": r.name, "code": r.code, "dc_capacity_kwp": r.dc_capacity_kwp,
-             "distance_km": round(r.distance_km, 2)} for r in db.execute(q, {"lat": lat, "lon": lon, "r": radius_km * 1000})]
+             "distance_km": round(r.distance_km, 2)} for r in db.execute(q, {"lat": lat, "lon": lon, "r": radius_km * 1000}) if in_scope(p, r.id)]
 
 
 @router.get("/plants/within")
@@ -52,14 +52,14 @@ def plants_within(bbox: str = Query(..., description="min_lon,min_lat,max_lon,ma
     a, b, c, d = (float(v) for v in bbox.split(","))
     q = text("""SELECT id, name, code FROM plants
                 WHERE ST_Intersects(location, ST_MakeEnvelope(:a, :b, :c, :d, 4326)::geography)""")
-    return [{"plant_id": str(r.id), "name": r.name, "code": r.code} for r in db.execute(q, {"a": a, "b": b, "c": c, "d": d})]
+    return [{"plant_id": str(r.id), "name": r.name, "code": r.code} for r in db.execute(q, {"a": a, "b": b, "c": c, "d": d}) if in_scope(p, r.id)]
 
 
 @router.get("/regions")
 def regions(start: datetime | None = None, end: datetime | None = None, p: Principal = Depends(require("plants:read")),
             db: Session = Depends(get_db)) -> list[dict]:
     """Regional portfolio comparison grouped by country and region."""
-    plants = db.scalars(select(Plant)).all()
+    plants = db.scalars(scoped(select(Plant), Plant.id, p)).all()
     s, e = resolve_period(db, [x.id for x in plants] or None, start, end, default_days=30)
     groups: dict[tuple, dict] = {}
     for x in plants:

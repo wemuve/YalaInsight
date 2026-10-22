@@ -11,9 +11,18 @@ plant data into technical, operational and financial decisions by answering five
 4. What could be recovered?
 5. Which intervention pays back best?
 
-> **Status: Stage 1 functional MVP — not production-ready.** See
-> [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) for implemented vs outstanding work. All bundled data
-> is synthetic.
+> **Status: Stage 1 MVP with production hardening.** It is deployable to Render in a few clicks
+> ([`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)). It has not yet been proven against live plant data or
+> an external security review; see [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md). All bundled demo
+> data is synthetic.
+
+## Deploy
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/wemuve/YalaInsight)
+
+The button creates the web service, PostgreSQL + PostGIS and Redis from `render.yaml`. You are asked
+for the first administrator's email and a temporary password. Full guide:
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Quick start
 
@@ -23,10 +32,10 @@ cd backend
 pip install -r requirements-dev.txt
 alembic upgrade head
 python -m app.seed --reset
-uvicorn app.main:app --reload
+YALA_SHOW_DEMO_LOGIN=true uvicorn app.main:app --reload
 # UI  → http://localhost:8000      login admin@demo.yalainsight.local / Demo-Password-2026
 # API → http://localhost:8000/api/docs
-python -m pytest -q          # 56 tests: engines, API, tenant isolation (needs yalainsight_test DB)
+python -m pytest -q          # 68 tests: engines, API, security, tenant isolation (needs yalainsight_test DB)
 ```
 
 The container path is `cp .env.example .env && docker compose up -d --build`.
@@ -43,7 +52,7 @@ The container path is `cp .env.example .env && docker compose up -d --build`.
 | Forecasting | Climatology P10/P50/P90 baseline, backtest, missing-data warnings. |
 | GIS | PostGIS plant points, boundaries and equipment; portfolio map; radius, bbox and regional queries. |
 | Reporting & integrations | PDF/CSV reports, CSV import/export, versioned REST API with OpenAPI, API keys, signed webhooks, PVGIS/PVWatts adapters, connector interfaces. |
-| Platform | RBAC (6 roles), PostgreSQL row-level security, module licensing per plan, audit log, JSON logs, health/readiness/metrics. |
+| Platform | RBAC (6 roles) with per-user plant access; PostgreSQL row-level security; 2FA, lockout and session revocation; module licensing per plan; audit log; scheduled jobs; Redis rate limits; strict CSP; JSON logs; health, readiness and metrics. |
 
 ## Repository layout
 

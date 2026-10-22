@@ -10,7 +10,7 @@ from ...core.deps import Principal, require
 from ...db import get_db
 from ...models import Alert, ExchangeRate, Organization, Plant, WorkOrder
 from ..anomaly.router import alert_out
-from ..common import resolve_period
+from ..common import resolve_period, scoped
 from ..finance import engine as fe
 from ..maintenance.router import wo_out
 from .service import ACTIVE_ALERT, CLOSED_WO, plant_kpis
@@ -21,7 +21,7 @@ router = APIRouter(tags=["dashboard"])
 @router.get("/dashboard/summary")
 def summary(start: datetime | None = None, end: datetime | None = None, p: Principal = Depends(require("plants:read")),
             db: Session = Depends(get_db)) -> dict:
-    plants = db.scalars(select(Plant).order_by(Plant.name)).all()
+    plants = db.scalars(scoped(select(Plant), Plant.id, p).order_by(Plant.name)).all()
     s, e = resolve_period(db, [x.id for x in plants] or None, start, end, default_days=30)
     rows = [plant_kpis(db, x, s, e) for x in plants]
 
@@ -56,9 +56,9 @@ def summary(start: datetime | None = None, end: datetime | None = None, p: Princ
     act, exp = tot(["performance", "actual_kwh_compared"]), tot(["performance", "expected_kwh"])
     ref = sum((r["performance"]["actual_kwh_compared"] / r["performance"]["performance_ratio"])
               for r in rows if r["performance"]["performance_ratio"])
-    top_alerts = db.execute(select(Alert, Plant.name).join(Plant, Plant.id == Alert.plant_id)
+    top_alerts = db.execute(scoped(select(Alert, Plant.name), Alert.plant_id, p).join(Plant, Plant.id == Alert.plant_id)
                             .where(Alert.status.in_(ACTIVE_ALERT)).order_by(Alert.priority_score.desc()).limit(8)).all()
-    overdue = db.execute(select(WorkOrder, Plant.name).join(Plant, Plant.id == WorkOrder.plant_id)
+    overdue = db.execute(scoped(select(WorkOrder, Plant.name), WorkOrder.plant_id, p).join(Plant, Plant.id == WorkOrder.plant_id)
                          .where(WorkOrder.status.notin_(CLOSED_WO), WorkOrder.due_date < datetime.now().date())
                          .order_by(WorkOrder.due_date).limit(8)).all()
     return {

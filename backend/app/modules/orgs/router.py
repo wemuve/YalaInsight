@@ -1,7 +1,6 @@
 """Organisation, users, API keys, module licensing, audit log and platform administration."""
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -13,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from ...core.audit import audit
 from ...core.deps import Principal, client_ip, require
-from ...core.security import hash_password, new_api_key
+from ...core.security import check_password_policy, hash_password, new_api_key
 from ...db import get_db, system_session
 from ...licensing import ALL_MODULES, enabled_modules
 from ...models import ROLES, ApiKey, AuditLog, Organization, OrgModuleOverride, Plant, SubscriptionPlan, User
@@ -22,8 +21,8 @@ router = APIRouter(tags=["organisation"])
 
 
 def _check_password(pw: str) -> None:
-    if len(pw) < 10 or not re.search(r"[A-Za-z]", pw) or not re.search(r"\d", pw):
-        raise HTTPException(422, "Password must be at least 10 characters and contain letters and digits")
+    if err := check_password_policy(pw):
+        raise HTTPException(422, err)
 
 
 @router.get("/org")
@@ -65,18 +64,38 @@ class UserIn(BaseModel):
     full_name: str = Field(max_length=200)
     role: str
     password: str = Field(max_length=200)
+    plant_scope: list[UUID] | None = None  # None = all plants
+    must_change_password: bool = True
 
 
 class UserPatch(BaseModel):
+    model_config = {"extra": "forbid"}
     full_name: str | None = None
     role: str | None = None
     is_active: bool | None = None
     password: str | None = None
+    plant_scope: list[UUID] | None = None
+    all_plants: bool | None = None   # true clears plant_scope (access to every plant)
+    unlock: bool | None = None
+    reset_mfa: bool | None = None
 
 
 def _user_out(u: User) -> dict:
+    now = datetime.now(UTC)
     return {"id": str(u.id), "email": u.email, "full_name": u.full_name, "role": u.role, "is_active": u.is_active,
-            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None}
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+            "mfa_enabled": u.totp_enabled, "locked": bool(u.locked_until and u.locked_until > now),
+            "must_change_password": u.must_change_password, "plant_scope": u.plant_scope}
+
+
+def _check_scope(db: Session, scope: list[UUID] | None) -> list[str] | None:
+    if scope is None:
+        return None
+    ids = {str(x) for x in scope}
+    found = {str(x) for x in db.scalars(select(Plant.id).where(Plant.id.in_(list(scope))))}
+    if ids - found:
+        raise HTTPException(422, "plant_scope contains unknown plants")
+    return sorted(ids)
 
 
 def _check_role(role: str, actor: Principal) -> None:
@@ -103,7 +122,8 @@ def create_user(body: UserIn, request: Request, p: Principal = Depends(require("
     _check_role(body.role, p)
     _check_password(body.password)
     u = User(organization_id=p.org_id, email=body.email.strip().lower(), full_name=body.full_name, role=body.role,
-             password_hash=hash_password(body.password))
+             password_hash=hash_password(body.password), must_change_password=body.must_change_password,
+             plant_scope=_check_scope(db, body.plant_scope))
     db.add(u)
     try:
         db.flush()
@@ -122,16 +142,35 @@ def patch_user(user_id: UUID, body: UserPatch, request: Request, p: Principal = 
     u = db.get(User, user_id)
     if not u or u.organization_id != p.org_id:
         raise HTTPException(404, "User not found")
-    changes = body.model_dump(exclude_none=True)
+    changes = body.model_dump(exclude_none=True, mode="json")
+    if u.id == p.user_id and (changes.get("is_active") is False or ("role" in changes and changes["role"] != u.role)):
+        raise HTTPException(422, "You cannot deactivate yourself or change your own role")
+    revoke = False
     if "role" in changes:
         _check_role(changes["role"], p)
+        revoke = changes["role"] != u.role
     if "password" in changes:
         _check_password(changes["password"])
         u.password_hash = hash_password(changes.pop("password"))
-        changes["password"] = "changed"
+        u.must_change_password = True  # admin-set passwords are temporary
+        changes["password"] = "reset"
+        revoke = True
+    if changes.get("is_active") is False:
+        revoke = True
+    if changes.get("all_plants"):
+        u.plant_scope = None
+    elif "plant_scope" in changes:
+        u.plant_scope = _check_scope(db, body.plant_scope)
+    if changes.get("unlock"):
+        u.locked_until, u.failed_logins = None, 0
+    if changes.get("reset_mfa"):
+        u.totp_enabled, u.totp_secret = False, None
+        revoke = True
     for k in ("full_name", "role", "is_active"):
         if k in changes:
             setattr(u, k, changes[k])
+    if revoke:
+        u.token_version += 1
     audit(db, org_id=p.org_id, user_id=p.user_id, action="user.update", entity_type="user", entity_id=u.id,
           details=changes, ip=client_ip(request))
     db.commit()
@@ -234,7 +273,7 @@ def create_org(body: OrgCreate, request: Request, p: Principal = Depends(require
         try:
             db.flush()
             admin = User(organization_id=org.id, email=body.admin_email.lower(), full_name=body.admin_name, role="client_admin",
-                         password_hash=hash_password(body.admin_password))
+                         password_hash=hash_password(body.admin_password), must_change_password=True)
             db.add(admin)
             db.flush()
         except IntegrityError:
@@ -273,3 +312,9 @@ def patch_license(org_id: UUID, body: LicensePatch, request: Request, p: Princip
               entity_id=org.id, details=body.model_dump(exclude_none=True), ip=client_ip(request))
         db.commit()
         return {"id": str(org.id), "plan_code": org.plan_code, "modules": sorted(enabled_modules(db, org))}
+
+
+@router.get("/platform/jobs", tags=["platform"])
+def jobs(p: Principal = Depends(require("platform:admin"))) -> list[dict]:
+    from ...jobs import job_status
+    return job_status()

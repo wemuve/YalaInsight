@@ -121,7 +121,8 @@ def test_hook(hook_id: UUID, background: BackgroundTasks, p: Principal = Depends
 @router.get("/webhooks/deliveries", dependencies=gated)
 def deliveries(p: Principal = Depends(require("webhooks:manage")), db: Session = Depends(get_db)) -> list[dict]:
     return [{"id": str(d.id), "subscription_id": str(d.subscription_id), "event": d.event, "status_code": d.status_code,
-             "success": d.success, "error": d.error, "attempted_at": d.attempted_at.isoformat()}
+             "success": d.success, "error": d.error, "attempted_at": d.attempted_at.isoformat(), "attempts": d.attempts,
+             "next_attempt_at": d.next_attempt_at.isoformat() if d.next_attempt_at else None}
             for d in db.scalars(select(WebhookDelivery).order_by(WebhookDelivery.attempted_at.desc()).limit(100))]
 
 

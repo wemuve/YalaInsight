@@ -13,7 +13,7 @@ from ...core.audit import audit
 from ...core.deps import Principal, client_ip, require, require_module
 from ...db import get_db
 from ...models import Alert, Equipment, Plant, WorkOrder
-from ..common import get_plant, resolve_period
+from ..common import get_plant, in_scope, resolve_period, scoped
 from ..integrations.webhooks import deliver
 from . import service
 
@@ -57,6 +57,7 @@ def list_alerts(plant_id: UUID | None = None, status: str | None = None, severit
                 limit: int = 100, p: Principal = Depends(require("alerts:read")), db: Session = Depends(get_db)) -> list[dict]:
     q = select(Alert, Plant.name, Equipment.name).join(Plant, Plant.id == Alert.plant_id).outerjoin(
         Equipment, Equipment.id == Alert.equipment_id)
+    q = scoped(q, Alert.plant_id, p)
     if plant_id:
         q = q.where(Alert.plant_id == plant_id)
     if status == "active":
@@ -71,14 +72,14 @@ def list_alerts(plant_id: UUID | None = None, status: str | None = None, severit
 
 @router.get("/alerts/stats")
 def alert_stats(p: Principal = Depends(require("alerts:read")), db: Session = Depends(get_db)) -> dict:
-    return {"by_rule": service.review_stats(db),
+    return {"by_rule": service.review_stats(db, p.plant_scope),
             "note": "precision = confirmed ÷ (confirmed + false positive) among reviewed alerts; used to validate rules in pilots."}
 
 
 @router.get("/alerts/{alert_id}")
 def get_alert(alert_id: UUID, p: Principal = Depends(require("alerts:read")), db: Session = Depends(get_db)) -> dict:
     a = db.get(Alert, alert_id)
-    if not a or a.organization_id != p.org_id:
+    if not a or a.organization_id != p.org_id or not in_scope(p, a.plant_id):
         raise HTTPException(404, "Alert not found")
     plant = db.get(Plant, a.plant_id)
     eq = db.get(Equipment, a.equipment_id) if a.equipment_id else None
@@ -97,7 +98,7 @@ class ReviewIn(BaseModel):
 def review_alert(alert_id: UUID, body: ReviewIn, request: Request, p: Principal = Depends(require("alerts:review")),
                  db: Session = Depends(get_db)) -> dict:
     a = db.get(Alert, alert_id)
-    if not a or a.organization_id != p.org_id:
+    if not a or a.organization_id != p.org_id or not in_scope(p, a.plant_id):
         raise HTTPException(404, "Alert not found")
     if body.status in ("confirmed", "false_positive") and not body.finding_notes:
         raise HTTPException(422, "finding_notes are required to confirm or reject an alert (record the inspection evidence)")

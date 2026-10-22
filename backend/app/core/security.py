@@ -15,6 +15,14 @@ from ..config import settings
 ALGORITHM = "HS256"
 
 
+def check_password_policy(pw: str) -> str | None:
+    """Return an error message if the password is too weak, else None."""
+    import re
+    if len(pw) < 10 or not re.search(r"[A-Za-z]", pw) or not re.search(r"\d", pw):
+        return "Password must be at least 10 characters and contain letters and digits"
+    return None
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
 
@@ -26,9 +34,9 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: UUID, org_id: UUID, role: str) -> str:
+def create_access_token(user_id: UUID, org_id: UUID, role: str, version: int = 0) -> str:
     now = datetime.now(UTC)
-    payload = {"sub": str(user_id), "org": str(org_id), "role": role, "iat": now,
+    payload = {"sub": str(user_id), "org": str(org_id), "role": role, "ver": version, "iat": now,
                "exp": now + timedelta(minutes=settings.jwt_ttl_minutes), "typ": "access"}
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
 

@@ -25,10 +25,14 @@ class Principal:
     user_id: UUID | None = None
     api_key_id: UUID | None = None
     email: str | None = None
+    plant_scope: list[UUID] | None = None  # None = every plant in the organisation
 
     @property
     def actor(self) -> str:
         return self.email or f"api_key:{self.api_key_id}"
+
+
+PASSWORD_CHANGE_ALLOWED = {"/api/v1/auth/me", "/api/v1/auth/change-password", "/api/v1/auth/logout-all"}
 
 
 def _unauthorized(detail: str = "Not authenticated") -> HTTPException:
@@ -73,6 +77,7 @@ def get_principal(request: Request, db: Session = Depends(get_db), authorization
         except jwt.PyJWTError:
             raise _unauthorized("Invalid or expired token") from None
         principal = Principal(org_id=UUID(claims["org"]), role=claims["role"], user_id=UUID(claims["sub"]))
+        token_version = claims.get("ver", 0)
         ok, retry = limiter.allow(f"user:{principal.user_id}", settings.rate_limit_per_minute)
         if not ok:
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Rate limit exceeded", headers={"Retry-After": str(retry)})
@@ -82,8 +87,13 @@ def get_principal(request: Request, db: Session = Depends(get_db), authorization
         user = db.get(User, principal.user_id)  # RLS-scoped lookup also proves the token's org matches
         if not user or not user.is_active or user.organization_id != principal.org_id:
             raise _unauthorized("User inactive")
+        if user.token_version != token_version:
+            raise _unauthorized("Session has been revoked — please sign in again")
         principal.role = user.role  # role changes take effect immediately
         principal.email = user.email
+        principal.plant_scope = [UUID(str(x)) for x in user.plant_scope] if user.plant_scope is not None else None
+        if user.must_change_password and request.url.path not in PASSWORD_CHANGE_ALLOWED:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Password change required before continuing")
     request.state.principal = principal
     return principal
 

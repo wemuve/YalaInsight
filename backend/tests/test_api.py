@@ -10,7 +10,7 @@ API = "/api/v1"
 def test_health_and_ready(client):
     assert client.get("/health").json()["status"] == "ok"
     r = client.get("/ready").json()
-    assert r["status"] == "ready" and r["db_revision"] == "0001"
+    assert r["status"] == "ready" and r["db_revision"] == "0002"
 
 
 def test_login_failures_and_audit(client, admin):

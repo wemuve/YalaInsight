@@ -95,6 +95,15 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = _created()
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Security state
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # bump to revoke all sessions
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    totp_secret: Mapped[str | None] = mapped_column(String(255))  # Fernet ciphertext
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # NULL = all plants in the organisation; otherwise the list of plant ids this user may access.
+    plant_scope: Mapped[list | None] = mapped_column(JSONB)
 
 
 class ApiKey(Base):
@@ -496,6 +505,19 @@ class WebhookDelivery(Base):
     success: Mapped[bool] = mapped_column(Boolean, default=False)
     error: Mapped[str | None] = mapped_column(Text)
     attempted_at: Mapped[datetime] = _created()
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ScheduledJob(Base):
+    """Bookkeeping for background jobs (system table, no tenant data)."""
+
+    __tablename__ = "scheduled_jobs"
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str | None] = mapped_column(String(20))
+    details: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
 TENANT_TABLES = [

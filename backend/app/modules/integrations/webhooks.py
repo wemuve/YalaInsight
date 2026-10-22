@@ -3,6 +3,9 @@
 Header ``X-Yala-Signature: sha256=<hex>`` is computed over the raw body with the
 subscription secret. Receivers must verify it and should treat deliveries as
 at-least-once (use ``X-Yala-Delivery`` for idempotency).
+
+Failed deliveries are retried by the scheduler with exponential backoff
+(1 min, 5 min, 30 min, 2 h, 12 h) and abandoned after ``MAX_ATTEMPTS``.
 """
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ import hashlib
 import hmac
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import httpx
@@ -42,6 +46,33 @@ def queue_event(db: Session, org_id: UUID, event: str, payload: dict) -> list[UU
     return ids
 
 
+MAX_ATTEMPTS = 6
+BACKOFF = [timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=30), timedelta(hours=2), timedelta(hours=12)]
+
+
+def _attempt(db: Session, d: WebhookDelivery, sub: WebhookSubscription) -> None:
+    body = json.dumps({"event": d.event, "delivery_id": str(d.id), "data": d.payload}, default=str).encode()
+    d.attempts += 1
+    d.attempted_at = datetime.now(UTC)
+    d.error = None
+    try:
+        r = httpx.post(sub.url, content=body, timeout=settings.external_http_timeout, headers={
+            "Content-Type": "application/json", "X-Yala-Event": d.event, "X-Yala-Delivery": str(d.id),
+            "X-Yala-Attempt": str(d.attempts), "X-Yala-Signature": sign(sub.secret, body)})
+        d.status_code, d.success = r.status_code, 200 <= r.status_code < 300
+        if not d.success:
+            d.error = f"HTTP {r.status_code}"
+    except httpx.HTTPError as exc:
+        d.success, d.error = False, str(exc)[:500]
+    if d.success or d.attempts >= MAX_ATTEMPTS or not sub.is_active:
+        d.next_attempt_at = None
+    else:
+        d.next_attempt_at = datetime.now(UTC) + BACKOFF[min(d.attempts - 1, len(BACKOFF) - 1)]
+    if not d.success:
+        log.warning("webhook delivery failed", extra={"extra_fields": {"delivery": str(d.id), "attempt": d.attempts,
+                                                                       "error": d.error}})
+
+
 def deliver(delivery_ids: list[UUID]) -> None:
     if not delivery_ids:
         return
@@ -49,15 +80,22 @@ def deliver(delivery_ids: list[UUID]) -> None:
         for did in delivery_ids:
             d = db.get(WebhookDelivery, did)
             sub = db.get(WebhookSubscription, d.subscription_id) if d else None
-            if not d or not sub:
-                continue
-            body = json.dumps({"event": d.event, "delivery_id": str(d.id), "data": d.payload}, default=str).encode()
-            try:
-                r = httpx.post(sub.url, content=body, timeout=settings.external_http_timeout, headers={
-                    "Content-Type": "application/json", "X-Yala-Event": d.event, "X-Yala-Delivery": str(d.id),
-                    "X-Yala-Signature": sign(sub.secret, body)})
-                d.status_code, d.success = r.status_code, 200 <= r.status_code < 300
-            except httpx.HTTPError as exc:
-                d.success, d.error = False, str(exc)[:500]
-                log.warning("webhook delivery failed", extra={"extra_fields": {"delivery": str(did), "error": str(exc)}})
-            db.commit()
+            if d and sub:
+                _attempt(db, d, sub)
+                db.commit()
+
+
+def retry_due(limit: int = 100) -> int:
+    """Re-send failed deliveries whose backoff has elapsed. Returns the number attempted."""
+    with system_session() as db:
+        due = db.scalars(select(WebhookDelivery).where(WebhookDelivery.success.is_(False),
+                                                       WebhookDelivery.next_attempt_at <= datetime.now(UTC))
+                         .order_by(WebhookDelivery.next_attempt_at).limit(limit).with_for_update(skip_locked=True)).all()
+        for d in due:
+            sub = db.get(WebhookSubscription, d.subscription_id)
+            if sub:
+                _attempt(db, d, sub)
+            else:
+                d.next_attempt_at = None
+        db.commit()
+        return len(due)
