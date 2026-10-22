@@ -11,6 +11,6 @@ USER yala
 WORKDIR /srv/backend
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD python -c "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+__import__('os').environ.get('PORT','8000')+'/health').status==200 else 1)"
-# Migrations run in the release step (deploy/release.sh), not on every container start.
-# PORT is injected by most PaaS hosts (Render, Fly, Heroku-style); default 8000.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --proxy-headers --forwarded-allow-ips '*'"]
+# deploy/start.sh applies database migrations and the first-run bootstrap (safe with several
+# instances), then starts the server. PORT is injected by most hosts (Render, Fly…); default 8000.
+CMD ["sh", "/srv/deploy/start.sh"]

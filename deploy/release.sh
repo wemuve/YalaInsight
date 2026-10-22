@@ -1,6 +1,5 @@
 #!/bin/sh
-# Release step: run once per deploy, before new instances take traffic (Render preDeployCommand).
+# Release step on its own (optional — deploy/start.sh already runs it at every start).
 set -eu
 cd "$(dirname "$0")/../backend"
-alembic upgrade head
-python -m app.bootstrap
+python -m app.release

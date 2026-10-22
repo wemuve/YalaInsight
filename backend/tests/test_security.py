@@ -237,3 +237,14 @@ def test_signup_rate_limit_and_closed(client, monkeypatch):
                                                  "password": "Strong-Passw0rd-1"})
     assert r.status_code == 403
     assert client.get(f"{API}/auth/config").json()["allow_signup"] is False
+
+
+def test_release_step_is_idempotent(seeded):
+    """deploy/start.sh runs the release step on every start; re-running it must be a no-op."""
+    from app import release
+
+    release.main()
+    release.main()
+    with system_session() as db:
+        from sqlalchemy import text
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"

@@ -21,7 +21,7 @@ services:
 
   migrate:
     build: .
-    command: ["sh", "/srv/deploy/release.sh"]
+    command: ["sh", "/srv/deploy/release.sh"]   # optional: api also migrates at start
     environment: &appenv
       YALA_ENV: ${YALA_ENV:-production}
       YALA_DATABASE_URL: postgresql+psycopg://yala_app:${YALA_APP_PASSWORD}@db:5432/yalainsight

@@ -52,6 +52,7 @@ async function api(path, opts = {}) {
     if (d && typeof d === "object" && d.message) {
       d = d.message + (d.errors || []).slice(0, 5).map((e) => ` · row ${e.row} [${e.field}] ${e.message}`).join("");
     }
+    if (typeof d === "string" && body && body.request_id && r.status >= 500) d += ` (reference ${body.request_id.slice(0, 8)})`;
     const err = new Error(typeof d === "string" ? d : JSON.stringify(d));
     err.status = r.status;
     throw err;
