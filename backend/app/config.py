@@ -44,6 +44,10 @@ class Settings:
     scheduler_enabled: bool = field(default_factory=lambda: _bool("YALA_SCHEDULER_ENABLED", False))
     detection_interval_minutes: int = field(default_factory=lambda: int(os.getenv("YALA_DETECTION_INTERVAL_MINUTES", "60")))
     show_demo_login: bool = field(default_factory=lambda: _bool("YALA_SHOW_DEMO_LOGIN", False))
+    # Self-service sign-up: anyone can create a new organisation and becomes its administrator.
+    allow_signup: bool = field(default_factory=lambda: _bool("YALA_ALLOW_SIGNUP", True))
+    signup_plan: str = field(default_factory=lambda: os.getenv("YALA_SIGNUP_PLAN", "enterprise"))
+    signups_per_hour_per_ip: int = field(default_factory=lambda: int(os.getenv("YALA_SIGNUPS_PER_HOUR", "5")))
     map_tile_url: str = field(default_factory=lambda: os.getenv(
         "YALA_MAP_TILE_URL", "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"))
     map_tile_attribution: str = field(default_factory=lambda: os.getenv(

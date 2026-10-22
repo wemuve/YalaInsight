@@ -37,7 +37,7 @@ defaults to the latest N days of available data.
 
 | Area | Method & path | Permission / module |
 |---|---|---|
-| Auth | `POST /auth/login`, `GET /auth/me` | – |
+| Auth | `POST /auth/signup`, `POST /auth/login`, `GET /auth/me`, `GET /auth/config`, `POST /auth/change-password`, `POST /auth/logout-all`, `POST /auth/mfa/{setup,enable,disable}` | – |
 | Organisation | `GET/PATCH /org`, `GET/POST /users`, `PATCH /users/{id}`, `GET /users/directory`, `GET/POST /api-keys`, `DELETE /api-keys/{id}`, `GET /audit-logs` | org:read / users:manage / apikeys:manage / audit:read |
 | Platform | `GET /platform/plans`, `GET/POST /platform/organizations`, `PATCH /platform/organizations/{id}/license` | platform admin |
 | Plants | `GET/POST /plants`, `GET/PATCH/DELETE /plants/{id}`, `GET/POST /plants/{id}/equipment`, `PATCH /equipment/{id}`, `GET/POST /plants/{id}/contracts`, `GET/POST /plants/{id}/events`, `GET/POST /exchange-rates`, `GET /data-sources` | plants:read/write |

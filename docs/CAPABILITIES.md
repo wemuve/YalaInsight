@@ -24,6 +24,7 @@ Legend: ✅ implemented and tested · 🟡 partial or interface only · ⬜ outs
 | Authentication, tenant separation | ✅ | JWT and API keys. RLS plus app-level checks. Isolation tests use raw SQL. Production start-up refuses an RLS-bypassing DB role. |
 | Role-based permissions (6 roles) | ✅ | Matrix in `SECURITY.md`. |
 | Two-factor auth, lockout, session revocation, forced password change | ✅ | TOTP with encrypted secrets; admin unlock, reset and deactivation revoke sessions. |
+| Self-service sign-up | ✅ | Creates an isolated organisation and admin; rate-limited; can be turned off. Email verification is pending an email provider. |
 | Plant-level access scoping | ✅ | Per-user plant list enforced across every view and endpoint. |
 | Plant registration (capacity, technology, commissioning, location, boundary) | ✅ | PostGIS geography. |
 | Equipment register (serials, warranties, locations, hierarchy) | ✅ | |

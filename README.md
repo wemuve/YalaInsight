@@ -35,7 +35,7 @@ python -m app.seed --reset
 YALA_SHOW_DEMO_LOGIN=true uvicorn app.main:app --reload
 # UI  → http://localhost:8000      login admin@demo.yalainsight.local / Demo-Password-2026
 # API → http://localhost:8000/api/docs
-python -m pytest -q          # 68 tests: engines, API, security, tenant isolation (needs yalainsight_test DB)
+python -m pytest -q          # 70 tests: engines, API, security, tenant isolation (needs yalainsight_test DB)
 ```
 
 The container path is `cp .env.example .env && docker compose up -d --build`.

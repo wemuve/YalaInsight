@@ -20,6 +20,25 @@
       <button type="submit" class="btn primary">Sign in</button>
       <p id="login-error" class="error"></p>
       <p id="demo-hint" class="muted small hidden">Demo instance with synthetic data. Demo password: <code>Demo-Password-2026</code></p>
+      <p class="small muted">Forgot your password? Ask your organisation's administrator to reset it.</p>
+      <p id="signup-link" class="small hidden">New to YalaInsight? <a href="#" id="show-signup">Create an account</a></p>
+    </form>
+    <form id="signup-form" class="login-card hidden">
+      <div class="brand big"><span class="logo">◐</span> YalaInsight</div>
+      <h2>Create your account</h2>
+      <p class="muted small">This sets up a new organisation for your plants. You'll be its administrator and can invite colleagues later.</p>
+      <label>Organisation name <input id="su-org" name="organisation_name" required minlength="2" maxlength="200" autocomplete="organization"></label>
+      <label>Your name <input id="su-name" name="full_name" required minlength="2" maxlength="200" autocomplete="name"></label>
+      <label>Work email <input id="su-email" name="email" type="email" required autocomplete="email"></label>
+      <label>Password <input id="su-pw" name="password" type="password" required minlength="10" autocomplete="new-password"></label>
+      <p class="muted small">At least 10 characters, with letters and digits.</p>
+      <div class="row">
+        <label>Country (ISO-2, optional) <input id="su-country" name="country_code" maxlength="2" placeholder="KE"></label>
+        <label>Currency <input id="su-ccy" name="default_currency" maxlength="3" value="USD" required></label>
+      </div>
+      <button type="submit" class="btn primary">Create account</button>
+      <p id="signup-error" class="error"></p>
+      <p class="small">Already have an account? <a href="#" id="show-login">Sign in</a></p>
     </form>
   </div>
 

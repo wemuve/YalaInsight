@@ -36,12 +36,19 @@ def test_row_level_security_restricts_raw_queries(seeded):
     with system_session() as s:
         demo = s.scalar(select(Organization).where(Organization.slug == "demo-energy"))
         other = s.scalar(select(Organization).where(Organization.slug == "other-tenant"))
+        all_orgs = list(s.scalars(select(Organization.id)))
         total_plants = s.scalar(select(func.count(Plant.id)))
     plants, readings, alerts, orgs, owners = _counts(demo.id)
     assert plants == 3 and readings > 0 and alerts > 0 and orgs == 1 and owners == {demo.id}
     plants_o, readings_o, alerts_o, orgs_o, owners_o = _counts(other.id)
     assert plants_o == 1 and alerts_o == 0 and owners_o == {other.id}
-    assert total_plants == plants + plants_o
+    # Every tenant (including ones created by other tests) sees exactly its own plants, and nothing else.
+    seen = 0
+    for org_id in all_orgs:
+        n, _, _, visible_orgs, owner_ids = _counts(org_id)
+        assert visible_orgs == 1 and owner_ids <= {org_id}
+        seen += n
+    assert seen == total_plants
     # No tenant context at all -> nothing is visible.
     assert _counts(None)[:4] == (0, 0, 0, 0)
 

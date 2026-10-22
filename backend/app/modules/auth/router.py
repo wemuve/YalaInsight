@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from ...config import settings
 from ...core import totp
@@ -16,7 +19,7 @@ from ...core.rbac import PERMISSIONS
 from ...core.security import check_password_policy, create_access_token, hash_password, verify_password
 from ...db import system_session
 from ...licensing import enabled_modules
-from ...models import Organization, User
+from ...models import Organization, SubscriptionPlan, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -45,8 +48,57 @@ def _token(user: User) -> TokenOut:
 @router.get("/config")
 def public_config() -> dict:
     """Unauthenticated client configuration (no secrets)."""
-    return {"show_demo_login": settings.show_demo_login, "map_tile_url": settings.map_tile_url,
+    return {"show_demo_login": settings.show_demo_login, "allow_signup": settings.allow_signup, "map_tile_url": settings.map_tile_url,
             "map_tile_attribution": settings.map_tile_attribution, "environment": settings.env}
+
+
+class SignupIn(BaseModel):
+    organisation_name: str = Field(min_length=2, max_length=200)
+    full_name: str = Field(min_length=2, max_length=200)
+    email: str = Field(max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(max_length=200)
+    country_code: str | None = Field(None, pattern="^[A-Z]{2}$")
+    default_currency: str = Field("USD", pattern="^[A-Z]{3}$")
+
+
+def _slug(name: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60] or "org"
+    return f"{base}-{secrets.token_hex(3)}"
+
+
+@router.post("/signup", response_model=TokenOut, status_code=201)
+def signup(body: SignupIn, request: Request) -> TokenOut:
+    """Create a new organisation and its first administrator, then sign them in."""
+    if not settings.allow_signup:
+        raise HTTPException(403, "Sign-up is closed on this instance. Ask your administrator for an invitation.")
+    ip = client_ip(request)
+    ok, retry = limiter.allow(f"signup:{ip}", settings.signups_per_hour_per_ip, window_s=3600)
+    if not ok:
+        raise HTTPException(429, "Too many sign-ups from this network. Try again later.", headers={"Retry-After": str(retry)})
+    if err := check_password_policy(body.password):
+        raise HTTPException(422, err)
+    email = body.email.strip().lower()
+    with system_session() as db:
+        if db.scalar(select(User).where(func.lower(User.email) == email)):
+            raise HTTPException(409, "An account with this email already exists. Sign in instead.")
+        if not db.get(SubscriptionPlan, settings.signup_plan):
+            raise HTTPException(500, "Sign-up plan is misconfigured")
+        org = Organization(name=body.organisation_name.strip(), slug=_slug(body.organisation_name), plan_code=settings.signup_plan,
+                           default_currency=body.default_currency, country_code=body.country_code)
+        db.add(org)
+        db.flush()
+        user = User(organization_id=org.id, email=email, full_name=body.full_name.strip(), role="client_admin",
+                    password_hash=hash_password(body.password), last_login_at=datetime.now(UTC))
+        db.add(user)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "An account with this email already exists. Sign in instead.") from None
+        audit(db, org_id=org.id, user_id=user.id, action="auth.signup", entity_type="organization", entity_id=org.id,
+              details={"plan": org.plan_code}, ip=ip)
+        db.commit()
+        return _token(user)
 
 
 @router.post("/login", response_model=TokenOut)
