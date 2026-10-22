@@ -30,6 +30,48 @@
     }
    }
   },
+  "/api/v1/auth/signup": {
+   "post": {
+    "tags": [
+     "auth"
+    ],
+    "summary": "Signup",
+    "description": "Create a new organisation and its first administrator, then sign them in.",
+    "operationId": "signup_api_v1_auth_signup_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SignupIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TokenOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/api/v1/auth/login": {
    "post": {
     "tags": [
@@ -8225,6 +8267,59 @@
      "status"
     ],
     "title": "ReviewIn"
+   },
+   "SignupIn": {
+    "properties": {
+     "organisation_name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 2,
+      "title": "Organisation Name"
+     },
+     "full_name": {
+      "type": "string",
+      "maxLength": 200,
+      "minLength": 2,
+      "title": "Full Name"
+     },
+     "email": {
+      "type": "string",
+      "maxLength": 254,
+      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+      "title": "Email"
+     },
+     "password": {
+      "type": "string",
+      "maxLength": 200,
+      "title": "Password"
+     },
+     "country_code": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^[A-Z]{2}$"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Country Code"
+     },
+     "default_currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "title": "Default Currency",
+      "default": "USD"
+     }
+    },
+    "type": "object",
+    "required": [
+     "organisation_name",
+     "full_name",
+     "email",
+     "password"
+    ],
+    "title": "SignupIn"
    },
    "SimulationIn": {
     "properties": {

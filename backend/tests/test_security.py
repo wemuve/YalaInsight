@@ -188,3 +188,52 @@ def test_bootstrap_creates_platform_admin(seeded, monkeypatch):
         assert demo.is_active is False
         demo.is_active = True  # restore for other tests
         db.commit()
+
+
+def test_self_signup_creates_isolated_organisation(client):
+    from app.core.ratelimit import limiter
+
+    limiter.reset()
+    email = f"founder{uuid.uuid4().hex[:6]}@newco.example"
+    body = {"organisation_name": "Sunrise Energy Ltd", "full_name": "Ama Founder", "email": email,
+            "password": "Strong-Passw0rd-1", "country_code": "GH", "default_currency": "GHS"}
+    r = client.post(f"{API}/auth/signup", json=body)
+    assert r.status_code == 201, r.text
+    h = _h(r)
+    me = client.get(f"{API}/auth/me", headers=h).json()
+    assert me["user"]["role"] == "client_admin" and me["organization"]["name"] == "Sunrise Energy Ltd"
+    assert me["organization"]["currency"] == "GHS" and "finance" in me["modules"]
+    assert client.get(f"{API}/plants", headers=h).json() == []  # sees none of the demo tenants' plants
+    d = client.get(f"{API}/dashboard/summary", headers=h).json()
+    assert d["portfolio"]["plant_count"] == 0
+    # can register a plant straight away, and sign in again with the chosen password
+    p = client.post(f"{API}/plants", headers=h, json={"name": "Tema Rooftop", "code": "GH-TEM-1", "dc_capacity_kwp": 500,
+                                                      "ac_capacity_kw": 450, "latitude": 5.67, "longitude": -0.01})
+    assert p.status_code == 201
+    assert _login(client, email, "Strong-Passw0rd-1").status_code == 200
+    # duplicate email and weak password are rejected
+    assert client.post(f"{API}/auth/signup", json=body).status_code == 409
+    assert client.post(f"{API}/auth/signup", json={**body, "email": "x" + email, "password": "short"}).status_code == 422
+    audit = [a["action"] for a in client.get(f"{API}/audit-logs", headers=h).json()]
+    assert "auth.signup" in audit
+
+
+def test_signup_rate_limit_and_closed(client, monkeypatch):
+    from app.config import settings
+    from app.core.ratelimit import limiter
+
+    limiter.reset()
+    tag = uuid.uuid4().hex[:6]
+    for i in range(settings.signups_per_hour_per_ip):
+        r = client.post(f"{API}/auth/signup", json={"organisation_name": f"Org {i}", "full_name": "Name",
+                                                     "email": f"rl{i}{tag}@b.example", "password": "Strong-Passw0rd-1"})
+        assert r.status_code == 201
+    r = client.post(f"{API}/auth/signup", json={"organisation_name": "Org X", "full_name": "Name", "email": "a@b.example",
+                                                 "password": "Strong-Passw0rd-1"})
+    assert r.status_code == 429
+    limiter.reset()
+    monkeypatch.setattr(type(settings), "allow_signup", property(lambda self: False), raising=False)
+    r = client.post(f"{API}/auth/signup", json={"organisation_name": "Org Y", "full_name": "Name", "email": "y@b.example",
+                                                 "password": "Strong-Passw0rd-1"})
+    assert r.status_code == 403
+    assert client.get(f"{API}/auth/config").json()["allow_signup"] is False

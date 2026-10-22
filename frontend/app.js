@@ -174,6 +174,29 @@ async function login(e) {
     }
   }
 }
+async function signup(e) {
+  e.preventDefault();
+  const f = formData(e.target);
+  $("#signup-error").textContent = "";
+  f.default_currency = (f.default_currency || "USD").toUpperCase();
+  if (f.country_code) f.country_code = f.country_code.toUpperCase();
+  try {
+    const r = await api("/auth/signup", { method: "POST", json: f });
+    S.token = r.access_token;
+    try { sessionStorage.setItem("yala_token", S.token); } catch (_) { /* storage unavailable */ }
+    e.target.reset();
+    showLoginForm(true);
+    location.hash = "#/dashboard";
+    await boot();
+    toast("Welcome! Your organisation is ready — register your first plant to begin.", 6000);
+  } catch (err) {
+    $("#signup-error").textContent = err.message;
+  }
+}
+function showLoginForm(login) {
+  $("#login-form").classList.toggle("hidden", !login);
+  $("#signup-form").classList.toggle("hidden", login);
+}
 function logout() {
   S.token = null; S.me = null; S.plants = null;
   try { sessionStorage.removeItem("yala_token"); } catch (_) { /* storage unavailable */ }
@@ -232,6 +255,19 @@ async function viewDashboard() {
   setCrumbs([{ label: "Portfolio dashboard" }]);
   const [d, plants] = await Promise.all([api(`/dashboard/summary?${periodQS()}`), plantsList()]);
   const p = d.portfolio, ccy = p.loss_currency;
+  if (!p.plant_count) {
+    view().innerHTML = `<div class="panel"><h1>Welcome to YalaInsight</h1>
+      <p>Your organisation <b>${esc(S.me.organization.name)}</b> has no plants yet. Three steps to your first analysis:</p>
+      <ol>
+        <li><b>Register a plant</b> with its capacity, location and module parameters.</li>
+        <li><b>Add an energy contract</b> (PPA, feed-in tariff or self-consumption price) so losses can be valued.</li>
+        <li><b>Import data</b>: weather/irradiance CSV first, then metered energy. The expected-generation model runs automatically.</li>
+      </ol>
+      <div class="row">${can("plants:write") ? `<a class="btn primary" href="#/plants">Register your first plant</a>` : `<span class="muted">Ask an administrator to register a plant.</span>`}
+        ${can("users:manage") ? `<a class="btn" href="#/settings/users">Invite colleagues</a>` : ""}</div>
+      <p class="note">CSV formats are described on each plant's “Data & contracts” tab. Sample files are in the repository's <code>sample_data/</code> folder.</p></div>`;
+    return;
+  }
   const fx = Object.entries(p.fx_rates_used || {}).map(([c, r]) => `${c}: 1 ${r.base} = ${r.rate} ${r.quote} (${r.rate_date}, ${r.source})`).join("; ");
   view().innerHTML = `
     <div class="row spread"><div><h1>Portfolio overview</h1>
@@ -360,7 +396,7 @@ async function viewPlants() {
       </tbody></table></div></div>
     <div class="panel hidden" id="plant-form-panel"><h2>Register a plant</h2>
       <form id="plant-form" class="form">
-        <label>Name <input name="name" required></label><label>Code <input name="code" required pattern="[A-Za-z0-9_-]+"></label>
+        <label>Name <input name="name" required></label><label>Code <input name="code" required pattern="[A-Za-z0-9_\\-]+"></label>
         <label>DC capacity (kWp) <input name="dc_capacity_kwp" type="number" step="any" required></label>
         <label>AC capacity (kW) <input name="ac_capacity_kw" type="number" step="any" required></label>
         <label>Latitude <input name="latitude" type="number" step="any" required></label><label>Longitude <input name="longitude" type="number" step="any" required></label>
@@ -1106,7 +1142,7 @@ async function viewSettings(tab = "org") {
       ${orgs.map((o) => `<tr><td>${esc(o.name)}<div class="muted small">${esc(o.slug)}</div></td><td><select data-plan="${o.id}">${plans.map((p) => `<option value="${p.code}" ${p.code === o.plan_code ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></td>
         <td class="small">${esc(o.modules.join(", "))}</td><td><button class="btn small" data-active="${o.id}" data-val="${!o.is_active}">${o.is_active ? "Suspend" : "Reactivate"}</button></td></tr>`).join("")}</tbody></table></div></div>
       <div class="panel"><h2>Onboard a customer organisation</h2><form id="org-form" class="form">
-        <label>Organisation name <input name="name" required></label><label>Slug (url-safe) <input name="slug" required pattern="[a-z0-9-]{3,80}"></label>
+        <label>Organisation name <input name="name" required></label><label>Slug (url-safe) <input name="slug" required pattern="[a-z0-9\\-]{3,80}"></label>
         <label>Plan <select name="plan_code">${plans.map((p) => `<option value="${p.code}">${esc(p.name)}</option>`).join("")}</select></label>
         <label>Currency <input name="default_currency" value="USD" maxlength="3" required></label><label>Country (ISO-2) <input name="country_code" maxlength="2"></label>
         <label>Admin name <input name="admin_name" required></label><label>Admin email <input type="email" name="admin_email" required></label>
@@ -1194,6 +1230,9 @@ document.addEventListener("click", (e) => {
   if (k) location.hash = k.dataset.href;
 });
 $("#login-form").addEventListener("submit", login);
+$("#signup-form").addEventListener("submit", signup);
+$("#show-signup").onclick = (e) => { e.preventDefault(); showLoginForm(false); };
+$("#show-login").onclick = (e) => { e.preventDefault(); showLoginForm(true); };
 $("#logout").onclick = logout;
 $("#menu").onclick = () => document.querySelector(".sidebar").classList.toggle("open");
 ["p-start", "p-end"].forEach((id) => $(`#${id}`).addEventListener("change", route));
@@ -1201,6 +1240,7 @@ $("#p-reset").onclick = () => { $("#p-start").value = ""; $("#p-end").value = ""
 window.addEventListener("hashchange", route);
 (async () => {
   try { S.config = { ...S.config, ...(await api("/auth/config")) }; } catch (_) { /* keep defaults */ }
+  if (S.config.allow_signup) $("#signup-link").classList.remove("hidden");
   if (S.config.show_demo_login) {
     $("#demo-hint").classList.remove("hidden");
     $("#login-form").elements.email.value = "admin@demo.yalainsight.local";

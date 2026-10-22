@@ -39,6 +39,12 @@ services:
         sync: false
       - key: YALA_BOOTSTRAP_ADMIN_PASSWORD
         sync: false
+      # Self-service sign-up: visitors can create their own organisation (they become its administrator).
+      - key: YALA_ALLOW_SIGNUP
+        value: "true"
+      # Plan given to self-service organisations (starter | professional | enterprise).
+      - key: YALA_SIGNUP_PLAN
+        value: enterprise
       # "true" loads the synthetic demo portfolio with published demo passwords. Never on a real-customer instance.
       - key: YALA_LOAD_DEMO
         value: "false"

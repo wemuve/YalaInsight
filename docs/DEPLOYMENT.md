@@ -47,8 +47,18 @@ African markets:
 6. Delete `YALA_BOOTSTRAP_ADMIN_PASSWORD` in the Render dashboard after the first sign-in. The
    bootstrap does nothing once that user exists.
 7. Add your domain under **Settings → Custom Domains**. Render issues the TLS certificate.
-8. Under **Settings & integrations → Platform**, create the first customer organisation and its
-   admin. That admin then invites their own users.
+8. Customers can now create their own account from **Create an account** on the sign-in page. Each
+   sign-up gets its own organisation, separate from all others, and its creator becomes that
+   organisation's administrator. You can also create organisations yourself under
+   **Settings & integrations → Platform**.
+
+> **Can't sign in?**
+> - **No account yet:** use **Create an account** on the sign-in page.
+> - **Platform administrator account:** this exists only if `YALA_BOOTSTRAP_ADMIN_EMAIL` and
+>   `YALA_BOOTSTRAP_ADMIN_PASSWORD` were set before a deploy. If they weren't, set them in Render and
+>   redeploy.
+> - **Demo passwords** work only on a demo instance (`YALA_LOAD_DEMO=true`).
+> - **After 5 wrong passwords** the account is locked for 15 minutes.
 
 ### Demo instance (optional)
 
@@ -101,6 +111,9 @@ docker compose up -d --build   # db → redis → migrate (release.sh) → api o
 | `YALA_MAP_TILE_URL` / `YALA_MAP_TILE_ATTRIBUTION` | OpenStreetMap | **Use a commercial tile provider in production.** OSM's public tiles are not for heavy commercial use. The CSP allows the configured host automatically. |
 | `YALA_CORS_ORIGINS` | — | Only if another origin calls the API from a browser. |
 | `YALA_BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD` | — | First platform administrator. |
+| `YALA_ALLOW_SIGNUP` | `true` | Shows "Create an account" on the sign-in page. Anyone can create a new organisation and becomes its administrator. Set to `false` for invitation-only instances. |
+| `YALA_SIGNUP_PLAN` | `enterprise` | Plan given to self-service organisations. Lower it (e.g. `starter`) once paid plans are in place; platform admins can change any organisation's plan. |
+| `YALA_SIGNUPS_PER_HOUR` | `5` | Sign-ups allowed per IP address per hour. |
 | `YALA_LOAD_DEMO` / `YALA_SHOW_DEMO_LOGIN` | `false` | Demo instances only. |
 | `NREL_API_KEY` | — | PVWatts adapter. |
 | `PORT`, `WEB_CONCURRENCY` | `8000`, `2` | Set by the host. |
