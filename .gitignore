@@ -5,3 +5,6 @@ __pycache__/
 .env
 *.dump
 .venv/
+
+# launch-video scratch (frames, stems)
+brag-output/work/

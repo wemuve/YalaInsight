@@ -1,0 +1,1 @@
+The sun came up. The revenue didn't. YalaInsight tells solar plant owners how much energy and money they lost, attributes every lost kWh to exactly one cause, and ranks the fixes by payback. Deploy it to Render in one click: github.com/wemuve/YalaInsight
