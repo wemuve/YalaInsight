@@ -248,3 +248,24 @@ def test_release_step_is_idempotent(seeded):
     with system_session() as db:
         from sqlalchemy import text
         assert db.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+
+
+def test_missing_database_url_fails_fast_with_guidance(monkeypatch):
+    """On a host (Render) with no database configured, the release step must stop at once with instructions
+    instead of retrying localhost for 90 seconds."""
+    import importlib
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in __import__("os").environ.items() if k not in ("YALA_DATABASE_URL", "DATABASE_URL")}
+    env["RENDER"] = "true"
+    r = subprocess.run([sys.executable, "-m", "app.release"], cwd=str(__import__("pathlib").Path(__file__).parents[1]),
+                       env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0
+    assert "No database is configured" in r.stderr and "Internal Database URL" in r.stderr
+    from app import config
+    monkeypatch.setenv("DATABASE_URL", "postgres://u:p@db.internal:5432/x")
+    monkeypatch.delenv("YALA_DATABASE_URL", raising=False)
+    s = importlib.reload(config).Settings()
+    assert s.database_configured and s.database_url == "postgresql+psycopg://u:p@db.internal:5432/x"
+    importlib.reload(config)

@@ -7,6 +7,7 @@ is missing. This does not depend on the host offering a separate pre-deploy hook
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -37,6 +38,10 @@ def _wait_for_database(timeout_s: int = 90) -> None:
 
 
 def main() -> None:
+    from .config import MISSING_DATABASE_HELP, settings
+
+    if not settings.database_configured and (settings.is_production or os.getenv("RENDER")):
+        raise SystemExit("release: FAILED — " + MISSING_DATABASE_HELP)
     _wait_for_database()
     root = Path(__file__).resolve().parents[1]
     cfg = Config(str(root / "alembic.ini"))

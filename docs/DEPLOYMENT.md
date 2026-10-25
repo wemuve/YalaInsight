@@ -61,6 +61,21 @@ African markets:
 > - **Demo passwords** work only on a demo instance (`YALA_LOAD_DEMO=true`).
 > - **After 5 wrong passwords** the account is locked for 15 minutes.
 >
+> **Deploy log says `release: waiting for database…` with `127.0.0.1:5432` / `localhost`, or "No database
+> is configured"?** The web service has no database connection string. This happens when the service
+> is created with **New → Web Service** instead of the Blueprint. Fix it either way:
+> - **Recommended:** delete that service and use **New → Blueprint**. It creates the database, Redis,
+>   secrets and settings for you.
+> - **Or connect it by hand:**
+>   1. Create **New → PostgreSQL** in the same region.
+>   2. Copy its **Internal Database URL**.
+>   3. In the web service's **Environment**, add:
+>      - `YALA_DATABASE_URL` set to that URL;
+>      - `YALA_ENV=production`;
+>      - `YALA_JWT_SECRET` and `YALA_DATA_KEY`, each a 64-character random value (click **Generate**);
+>      - `YALA_SCHEDULER_ENABLED=true`.
+>   4. Click **Save, rebuild and deploy**.
+>
 > **"Internal server error" or "The database has not been set up yet"?** The database schema is
 > missing or the app cannot reach the database.
 > 1. Open the service's **Logs** in Render and look for lines starting with `release:`.
@@ -109,7 +124,7 @@ docker compose up -d --build   # db → redis → migrate (release.sh) → api o
 | Variable | Default | Notes |
 |---|---|---|
 | `YALA_ENV` | `development` | Set to `production` to require strong secrets, enable HSTS and enforce the role check. |
-| `YALA_DATABASE_URL` | local | `postgres://`, `postgresql://` and `postgresql+psycopg://` URLs are all accepted. |
+| `YALA_DATABASE_URL` (or `DATABASE_URL`) | local dev DB | Required in production and on Render; start-up stops with instructions if missing. `postgres://`, `postgresql://` and `postgresql+psycopg://` URLs are all accepted. |
 | `YALA_JWT_SECRET` | dev value | ≥ 32 characters in production. Changing it signs everyone out. |
 | `YALA_DATA_KEY` | — | ≥ 32 characters in production. Encrypts 2FA secrets. Do not rotate. |
 | `YALA_REDIS_URL` | — | Shared rate limiting. Without it, limits are per instance. Fails open if Redis is down. |
